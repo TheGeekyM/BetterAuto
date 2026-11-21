@@ -42,6 +42,9 @@ private val Software = listOf(
     OpenSourcePart("Kotlin, kotlinx.coroutines", R.string.licences_kotlin, "Apache-2.0", "https://kotlinlang.org", R.raw.licence_apache_2_0),
     OpenSourcePart("OkHttp, Okio", R.string.licences_okhttp, "Apache-2.0", "https://square.github.io/okhttp/", R.raw.licence_apache_2_0),
     OpenSourcePart("Shizuku API", R.string.licences_shizuku, "MIT", "https://github.com/RikkaApps/Shizuku-API", R.raw.licence_shizuku_api),
+    OpenSourcePart("Vosk, vosk-model-small-en-us", R.string.licences_vosk, "Apache-2.0", "https://alphacephei.com/vosk/", R.raw.licence_apache_2_0),
+    // Dual-licensed LGPL-2.1 or Apache-2.0: taken under Apache-2.0
+    OpenSourcePart("JNA", R.string.licences_jna, "Apache-2.0", "https://github.com/java-native-access/jna", R.raw.licence_apache_2_0),
 )
 
 private val DataAndServices = listOf(

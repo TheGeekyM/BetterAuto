@@ -44,6 +44,7 @@ import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.LocalContentFocus
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /**
  * The car's smart-home screen for one provider: area chips on top (like the music tabs), then the
@@ -121,7 +122,7 @@ private fun AreaChip(text: String, selected: Boolean, modifier: Modifier = Modif
     Box(
         modifier
             .carClickable(shape, text, onClick = onClick)
-            .background(if (selected) colors.focus.copy(alpha = 0.22f) else colors.surface, shape)
+            .background(if (selected) colors.accent.copy(alpha = 0.22f) else colors.surface, shape)
             .height(60.dp)
             .padding(horizontal = 26.dp),
         contentAlignment = Alignment.Center,
@@ -160,7 +161,7 @@ fun SmartHomeGroupWidget(param: String?, modifier: Modifier = Modifier) {
     }
     if (group == null) {
         Column(
-            modifier.clip(RoundedCornerShape(28.dp)).background(colors.surface).padding(18.dp),
+            modifier.glass(RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp)).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             CarLabel(stringResource(R.string.widget_smart_home), 21.sp, colors.text, weight = FontWeight.Bold)
@@ -189,8 +190,8 @@ fun SmartHomeGroupCard(group: SmartGroup, modifier: Modifier = Modifier) {
     }
     Column(
         modifier
+            .glass(RoundedCornerShape(28.dp))
             .clip(RoundedCornerShape(28.dp))
-            .background(colors.surface)
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {

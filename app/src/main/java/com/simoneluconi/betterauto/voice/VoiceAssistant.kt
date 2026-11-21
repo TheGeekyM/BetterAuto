@@ -1,8 +1,16 @@
 package com.simoneluconi.betterauto.voice
 
+import android.content.ComponentName
+import com.simoneluconi.betterauto.map.nav.Destinations
+import com.simoneluconi.betterauto.car.CarControl
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.annotation.SuppressLint
 import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -11,8 +19,10 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.simoneluconi.betterauto.BuildConfig
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.R
 import com.simoneluconi.betterauto.audio.CarMicrophone
@@ -21,8 +31,7 @@ import com.simoneluconi.betterauto.map.nav.Navigation
 import com.simoneluconi.betterauto.map.nav.PlaceSearch
 import com.simoneluconi.betterauto.map.nav.Trip
 import com.simoneluconi.betterauto.media.NowPlaying
-import com.simoneluconi.betterauto.notifications.CarNotifications
-import com.simoneluconi.betterauto.notifications.NotificationContent
+import com.simoneluconi.betterauto.phone.CallPhase
 import com.simoneluconi.betterauto.phone.Calls
 import com.simoneluconi.betterauto.phone.Contact
 import com.simoneluconi.betterauto.phone.PhoneBook
@@ -31,13 +40,28 @@ import com.simoneluconi.betterauto.settings.LauncherSettings
 import com.simoneluconi.betterauto.settings.MicSource
 import com.simoneluconi.betterauto.settings.NameOrder
 import com.simoneluconi.betterauto.settings.Section
+import com.simoneluconi.betterauto.voice.cloud.Brain
+import com.simoneluconi.betterauto.voice.cloud.ClaudeAgent
+import com.simoneluconi.betterauto.voice.cloud.CloudResult
+import com.simoneluconi.betterauto.voice.cloud.CloudSpeech
+import com.simoneluconi.betterauto.voice.cloud.Conversation
+import com.simoneluconi.betterauto.voice.cloud.Gemini
+import com.simoneluconi.betterauto.voice.cloud.Persona
+import com.simoneluconi.betterauto.voice.cloud.WavEncoder
+import com.simoneluconi.betterauto.voice.wake.WakeListener
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
@@ -65,7 +89,13 @@ sealed interface VoiceState {
  * Voice commands: the car's microphone (the phone's as a fallback) goes to the phone's own on-device
  * speech recognizer, the live transcription is shown, and a command runs as soon as the transcription
  * forms one and holds still for a moment, without waiting for the recognizer to close.
- * Everything on the main thread.
+ *
+ * Online ([Brain]): the same audio is also recorded. When the driver stops, a clear command the phone's parser
+ * understands runs at once (the fast path); anything else goes to Gemini (speech to text, started speculatively at
+ * the end of speech) and Claude (streamed: acted on as soon as its tool call is complete), whose decision runs
+ * through the same commands below, or is an answer spoken by a Gemini voice. Any online failure or timeout falls
+ * back to the phone's parser on what it heard, or to listening again offline.
+ * Everything on the main thread, but the online calls.
  */
 object VoiceAssistant {
     private val _state = MutableStateFlow<VoiceState>(VoiceState.Idle)
@@ -74,7 +104,17 @@ object VoiceAssistant {
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var recognizer: SpeechRecognizer? = null
-    private var feed: LinkedBlockingQueue<ByteArray>? = null
+    @Volatile private var feed: LinkedBlockingQueue<ByteArray>? = null
+    /**
+     * Our own judge of the end of the sentence, on the audio we hand the recognizer (which stops at the first short
+     * pause): null when the recognizer opens the microphone itself.
+     */
+    @Volatile private var vad: Vad? = null
+    /** The words of the recognizer's earlier stretches this round: it stops at every pause, we listen on. */
+    private var said = ""
+    @Volatile private var phoneMic: AudioRecord? = null
+    /** Sample rate and channels of the audio we feed the recognizer. */
+    private var source: Pair<Int, Int>? = null
     private var contacts: List<Contact> = emptyList()
     private var parser = CommandParser(emptyList())
     private var resumeMusic = false
@@ -85,6 +125,29 @@ object VoiceAssistant {
     /** This round already moved from the on-device recognizer to the phone's speech service. */
     private var usingSpeechService = false
     private lateinit var appContext: Context
+
+    /** This turn's way ([Brain]); null or not cloud: the phone only, as before. */
+    private var route: Brain.Route? = null
+    private val _online = MutableStateFlow(false)
+    /** The listening may go online (shown in the listening pill). */
+    val online: StateFlow<Boolean> = _online
+    private var onDeviceRecognizer = false
+    private var hasRecognizer = true
+    /** The recognizer died before the end of speech (online it doesn't end the turn: our recording goes on). */
+    private var recognizerGone = false
+    /** Our own recording of the command while the turn may go online, in the microphone's format ([source]). */
+    private val capture = ByteArrayOutputStream()
+    private var vadEndAt = 0L
+    private var decided = false
+    private var stt: Deferred<String>? = null
+    /** The transcription's request: cancelled (its upload stopped) when the phone turns out to know the command. */
+    @Volatile private var sttCall: okhttp3.Call? = null
+    /** Bumped by every new turn and cancel: an online answer for an older turn does nothing. */
+    private var turn = 0
+    private val gemini = Gemini()
+    private val claude = ClaudeAgent()
+    private val memory = Conversation()
+    private val finalWait = Runnable { decideOnline("no final words from the recognizer") }
 
     private val choiceTimeout = Runnable {
         if (_state.value is VoiceState.Choosing) {
@@ -115,22 +178,78 @@ object VoiceAssistant {
         _state.value = VoiceState.Idle
     }
 
-    fun start(context: Context) {
+    fun start(context: Context) = begin(context, null)
+
+    /**
+     * A question the assistant asks by itself (reply to a message, answer a call): what the driver says next is its
+     * answer, not a command. [hint] is shown while listening, for [listenMs] at most; [yesNo]: a yes or a no ends it
+     * at once, heard on the phone when it can. [onAnswer] gets the words (online: Gemini's), or null when nothing was
+     * said or the driver cancelled. Always answered, on the main thread.
+     */
+    class Question(val hint: String, val listenMs: Long, val yesNo: Boolean, val onAnswer: (String?) -> Unit)
+
+    private var question: Question? = null
+
+    /** A [Question] is waiting for the driver's answer. */
+    val asking: Boolean get() = question != null
+
+    /** Asks [q] (the question itself already said): refused, answered null, while voice is off or a turn goes on. */
+    fun ask(context: Context, q: Question) {
+        appContext = context.applicationContext
+        if (!LauncherSettings.get(appContext).voiceEnabled.value || isBusy) {
+            q.onAnswer(null)
+            return
+        }
+        begin(context, q)
+    }
+
+    /** Shows and says [message] at the end of something the assistant did by itself ("sent"), under [heard]. */
+    fun report(context: Context, heard: String, message: String, understood: Boolean = true) {
+        appContext = context.applicationContext
+        if (isBusy) return
+        show(VoiceState.Done(heard, message, understood), speak = true)
+    }
+
+    /** The assistant would go online now (keys, internet, setting): its Gemini voice can speak. */
+    fun online(context: Context): Boolean {
+        appContext = context.applicationContext
+        return Brain.route(LauncherSettings.get(appContext).voiceBrain.value, hasKeys(), internet(), Build.VERSION.SDK_INT).cloud
+    }
+
+    private fun begin(context: Context, q: Question?) {
         appContext = context.applicationContext
         val settings = LauncherSettings.get(appContext)
         if (!settings.voiceEnabled.value) return
+        // One capture at a time: the wake listener lets the phone's microphone go before anything here opens one
+        WakeListener.releaseMic()
+        // A new turn while a question waited: that question gets no answer
+        question?.takeIf { it !== q }?.let { old -> question = null; old.onAnswer(null) }
+        question = q
         main.removeCallbacks(backToIdle)
         search?.cancel()
         search = null
-        if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)) {
-            EventLog.log("Voice: no on-device speech recognition on this phone")
+        turn++
+        CloudSpeech.stop()
+        // No on-device recognizer (e.g. Xiaomi China ROMs): the phone's speech service, Google's when installed
+        val onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)
+        hasRecognizer = onDevice || SpeechRecognizer.isRecognitionAvailable(appContext)
+        onDeviceRecognizer = onDevice
+        var way = Brain.route(settings.voiceBrain.value, hasKeys(), internet(), Build.VERSION.SDK_INT)
+        // A yes or a no needs no cloud, and the phone hears it sooner
+        if (q?.yesNo == true && hasRecognizer && way.cloud) way = Brain.Route(false, true, "a yes or no: on the phone")
+        route = way
+        _online.value = way.cloud
+        EventLog.log("Voice: ${if (q != null) "question, " else ""}${way.why}")
+        // Online the command is recorded by us: no recognizer only means no fast path
+        if (!hasRecognizer && !way.cloud) {
+            EventLog.log("Voice: no speech recognition on this phone")
             show(VoiceState.Done("", voiceText(R.string.voice_unavailable), understood = false), speak = false)
             return
         }
         stopRecognition()
         heard = ""
         pendingCommand = null
-        usingSpeechService = false
+        usingSpeechService = !onDevice
         startedAt = SystemClock.elapsedRealtime()
         loadContacts()
 
@@ -138,28 +257,69 @@ object VoiceAssistant {
         resumeMusic = NowPlaying.isPlaying
         if (resumeMusic) NowPlaying.pause()
         Speech.stop()
-        Speech.chime()
+        // A greeting first, as Siri does, and only then the microphone: it would hear the greeting in the car's speakers
+        val started = startedAt
+        show(VoiceState.Listening("", 0f, false, hint()), speak = false)
+        // The question was just said: straight to the microphone
+        if (q != null) {
+            Speech.chime()
+            listen(onDevice)
+            return
+        }
+        val greeting = greet {
+            main.post { if (startedAt == started && _state.value is VoiceState.Listening && recognizer == null) listen(onDevice) }
+        }
+        if (!greeting) {
+            Speech.chime()
+            listen(onDevice)
+        }
+    }
 
+    /** The recognizer on the car's microphone (or the phone's), once the greeting is over. */
+    private fun listen(onDevice: Boolean) {
+        val settings = LauncherSettings.get(appContext)
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, AppLocales.voice(appContext).toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, onDevice)
+            // Drivers pause mid-sentence ("ممكن… تفتحي التكييف"): end only after a real silence.
+            // ponytail: some recognizers ignore these; then their own ~1 s pause rules
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3_000L)
             if (Build.VERSION.SDK_INT >= 33) {
                 // Contact names and command words: the recognizer leans towards them
                 putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(Biasing + contacts.take(200).map { it.name }))
             }
         }
         // The car's microphone whenever the car has one, unless the driver chose the phone's
+        said = ""
         val carMic = settings.voiceMicrophone.value == MicSource.CAR && Build.VERSION.SDK_INT >= 33 && attachCarMicrophone(intent)
-        EventLog.log("Voice: listening (${if (carMic) "car" else "phone"} microphone, ${AppLocales.voice(appContext).toLanguageTag()})")
+        // Otherwise the phone's, recorded by us: the VAD hears what the recognizer hears
+        if (!carMic && Build.VERSION.SDK_INT >= 33) attachPhoneMicrophone(intent)
+        // Online needs our own recording of the command
+        if (vad == null && route?.cloud == true) {
+            EventLog.log("Voice: no recording of our own, offline")
+            route = null
+            _online.value = false
+        }
+        EventLog.log("Voice: listening (${if (carMic) "car" else "phone"} microphone, ${AppLocales.voice(appContext).toLanguageTag()}, VAD ${if (vad != null) "on" else "off"})")
+        if (route?.cloud == true) {
+            // TLS to Google and Anthropic while the driver talks: the requests at the end find it open
+            scope.launch(Dispatchers.IO) {
+                gemini.prewarm(BuildConfig.GEMINI_KEY)
+                claude.prewarm(BuildConfig.ANTHROPIC_KEY)
+            }
+        }
 
-        val rec = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
-        recognizer = rec
         request = intent
-        rec.setRecognitionListener(listener)
         show(VoiceState.Listening("", 0f, carMic, hint()), speak = false)
-        main.postDelayed(giveUp, MAX_LISTEN_MS)
+        main.postDelayed(giveUp, question?.listenMs ?: MAX_LISTEN_MS)
+        if (!hasRecognizer) return
+        val rec = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext) else speechService()
+        recognizer = rec
+        rec.setRecognitionListener(listener)
         rec.startListening(intent)
     }
 
@@ -171,15 +331,40 @@ object VoiceAssistant {
 
     fun cancel() {
         EventLog.log("Voice: cancelled")
+        val asked = question
+        question = null
         main.removeCallbacks(placeCall)
         main.removeCallbacks(choiceTimeout)
         callNumber = null
         search?.cancel()
         search = null
+        turn++
+        route = null
+        _online.value = false
+        CloudSpeech.stop()
         stopRecognition()
+        Speech.stop()
         Speech.cancelTone()
         restoreMusic()
         _state.value = VoiceState.Idle
+        asked?.onAnswer(null)
+    }
+
+    /** The driver answered the [Question] (null: nothing): the turn ends here, the asker goes on. */
+    private fun answerQuestion(text: String?) {
+        val q = question ?: return
+        question = null
+        turn++
+        cancelTranscription()
+        route = null
+        _online.value = false
+        stopRecognition()
+        restoreMusic()
+        _state.value = VoiceState.Idle
+        val words = text?.trim()?.takeIf { it.isNotEmpty() }
+        // What was said is personal: only its length goes to the log
+        EventLog.log("Voice: question answered after ${SystemClock.elapsedRealtime() - startedAt} ms, ${words?.let { "${it.length} characters" } ?: "nothing"}")
+        q.onAnswer(words)
     }
 
     /** From the list of contacts that fit the spoken name. */
@@ -192,19 +377,74 @@ object VoiceAssistant {
     /** The car's microphone through a pipe, in its own format; false if the car has none. */
     private fun attachCarMicrophone(intent: Intent): Boolean {
         val format = CarMicrophone.format.value ?: return false
-        val (read, write) = ParcelFileDescriptor.createPipe()
-        val queue = LinkedBlockingQueue<ByteArray>()
-        if (!CarMicrophone.start { pcm -> queue.offer(pcm) }) {
-            read.close()
-            write.close()
+        startFeed(intent, format.sampleRate, format.channels)
+        if (CarMicrophone.start { pcm -> onPcm(pcm) }) return true
+        stopFeed()
+        return false
+    }
+
+    /** The phone's microphone, recorded by us (we hold it as the foreground service); false if it would not open. */
+    @SuppressLint("MissingPermission")
+    private fun attachPhoneMicrophone(intent: Intent): Boolean {
+        val rate = 16_000
+        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val rec = runCatching {
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate))
+        }.getOrNull()
+        if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
+            rec?.release()
             return false
         }
+        startFeed(intent, rate, 1)
+        phoneMic = rec
+        rec.startRecording()
+        thread(name = "VoicePhoneMic") {
+            val buffer = ByteArray(rate / 10 * 2) // 100 ms
+            while (phoneMic === rec) {
+                val n = rec.read(buffer, 0, buffer.size)
+                if (n <= 0) break
+                onPcm(buffer.copyOf(n))
+            }
+        }
+        return true
+    }
+
+    private fun startFeed(intent: Intent, rate: Int, channels: Int) {
+        source = rate to channels
+        // Online every pause counts toward the answer's wait: a shorter silence ends the sentence
+        vad = Vad(rate, channels, if (route?.cloud == true) CLOUD_VAD_SILENCE_MS else VAD_SILENCE_MS)
+        synchronized(capture) { capture.reset() }
+        vadEndAt = 0L
+        decided = false
+        recognizerGone = false
+        stt = null
+        pipeInto(intent)
+    }
+
+    private fun stopFeed() {
+        vad = null
+        source = null
+        phoneMic?.let {
+            phoneMic = null
+            runCatching { it.stop() }
+            it.release()
+        }
+        feed?.offer(ByteArray(0))
+        feed = null
+    }
+
+    /** A fresh pipe for one stretch of the recognizer, the last one closed. */
+    private fun pipeInto(intent: Intent) {
+        val (rate, channels) = source ?: return
+        val (read, write) = ParcelFileDescriptor.createPipe()
+        val queue = LinkedBlockingQueue<ByteArray>()
+        feed?.offer(ByteArray(0))
         feed = queue
         intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, read)
-        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, format.channels)
+        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, channels)
         intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, format.sampleRate)
-        // The connection's thread must never wait on the recognizer: a queue and a writer of our own
+        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, rate)
+        // The microphone's thread must never wait on the recognizer: a queue and a writer of our own
         thread(name = "VoiceFeed") {
             runCatching {
                 FileOutputStream(write.fileDescriptor).use { out ->
@@ -218,30 +458,92 @@ object VoiceAssistant {
             runCatching { write.close() }
             runCatching { read.close() }
         }
+    }
+
+    /** Audio from either microphone: to the recognizer, and through the VAD. */
+    private fun onPcm(pcm: ByteArray) {
+        feed?.offer(pcm)
+        if (route?.cloud == true) synchronized(capture) { if (capture.size() < MAX_CAPTURE_BYTES) capture.write(pcm) }
+        val events = vad?.feed(pcm) ?: return
+        if (events.isNotEmpty()) main.post { events.forEach(::onVad) }
+    }
+
+    private fun onVad(event: Vad.Event) {
+        if (_state.value !is VoiceState.Listening) return
+        val after = SystemClock.elapsedRealtime() - startedAt
+        when (event) {
+            Vad.Event.SPEECH -> EventLog.log("Voice: VAD hears speech after $after ms")
+            Vad.Event.END -> {
+                EventLog.log("Voice: VAD end of sentence after $after ms")
+                if (route?.cloud == true) {
+                    vadEndAt = SystemClock.elapsedRealtime()
+                    // Speculative: the transcription starts now, while the phone's recognizer gives its last words,
+                    // unless what the phone heard so far is already a command it runs itself (nothing is sent then)
+                    // An answer to our own question is never a command: Gemini hears it
+                    val local = question == null && route?.localFirst == true && Brain.fastPath(heard.takeIf { it.isNotBlank() }?.let(parser::parse), recentPlaces())
+                    if (!local) startTranscription()
+                    if (recognizer == null || recognizerGone) {
+                        decideOnline("no recognizer")
+                        return
+                    }
+                    main.postDelayed(finalWait, FINAL_WAIT_MS)
+                }
+                // The recognizer gives its last words, then onResults finishes
+                recognizer?.stopListening()
+            }
+        }
+    }
+
+    /** The recognizer stopped at a pause the VAD does not take for the end: another stretch on a new pipe. */
+    private fun listenOn(): Boolean {
+        val v = vad ?: return false
+        val rec = recognizer ?: return false
+        val intent = request ?: return false
+        if (v.ended || SystemClock.elapsedRealtime() - startedAt > MAX_LISTEN_MS - 1_500) return false
+        pipeInto(intent)
+        EventLog.log("Voice: the recognizer stopped at a pause, listening on after \"$said\"")
+        rec.startListening(intent)
         return true
     }
 
+    /** What all the stretches heard so far, with [latest] at the end. */
+    private fun joined(latest: String) = listOf(said, latest).filter { it.isNotBlank() }.joinToString(" ")
+
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) = Unit
-        override fun onBeginningOfSpeech() = Unit
+        // What a failed listen went through: ready, speech heard, how loud at most (a silenced microphone stays at -2)
+        override fun onReadyForSpeech(params: Bundle?) {
+            peakRms = -100f
+            EventLog.log("Voice: recognizer ready")
+        }
+
+        override fun onBeginningOfSpeech() = EventLog.log("Voice: speech begins")
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onRmsChanged(rmsdB: Float) {
+            peakRms = maxOf(peakRms, rmsdB)
             val listening = _state.value as? VoiceState.Listening ?: return
             _state.value = listening.copy(level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
-            partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(::onText)
+            partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { onText(joined(it)) }
         }
 
         override fun onResults(results: Bundle?) {
-            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(::onText)
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }
+            text?.let { onText(joined(it)) }
+            // A pause, not the end: the VAD has not heard the driver stop
+            if (vad?.ended == false) {
+                text?.let { said = joined(it) }
+                if (listenOn()) return
+            }
             finish(understood = pendingCommand != null)
         }
 
         override fun onEndOfSpeech() {
+            // With our own audio the VAD decides when the sentence is over
+            if (vad != null) return
             // The transcription is final enough: act now (after a last partial) rather than wait for the recognizer
             if (pendingCommand != null) {
                 main.removeCallbacks(runPending)
@@ -250,8 +552,17 @@ object VoiceAssistant {
         }
 
         override fun onError(error: Int) {
-            EventLog.log("Voice: recognizer error $error")
+            EventLog.log("Voice: recognizer error $error, loudest ${"%.1f".format(peakRms)} dB")
+            // Nothing in this stretch (a long pause before or inside the sentence): listen on while the VAD has no end
+            if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && listenOn()) return
+            // Online our recording goes on: the end of speech (or the time limit) decides
+            if (route?.cloud == true) {
+                recognizerGone = true
+                if (vad?.ended == true) decideOnline("recognizer error $error")
+                return
+            }
             when {
+                error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED && pendingCommand == null -> languageMissing()
                 error != SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || pendingCommand != null -> finish(understood = pendingCommand != null)
                 !usingSpeechService && SpeechRecognizer.isRecognitionAvailable(appContext) -> useSpeechService()
                 else -> modelMissing()
@@ -264,19 +575,35 @@ object VoiceAssistant {
         if (text == heard) return
         heard = text
         (_state.value as? VoiceState.Listening)?.let { _state.value = it.copy(text = text) }
+        question?.let { q ->
+            pendingCommand = null
+            // A yes or a no is enough at once: the phone won't ring forever
+            if (q.yesNo && CommandParser.yesNo(text) != null) main.post { if (question === q && _state.value is VoiceState.Listening) answerQuestion(heard) }
+            return
+        }
         val command = parser.parse(text)
         pendingCommand = command
         main.removeCallbacks(runPending)
         // A command that holds still for a moment is what the driver meant. Not a call: a pause after
         // "call Mario" may come before the surname, so calls wait for the end of the sentence. Nor a place to drive
         // to: "portami a piazza" may go on with "del Campo".
-        if (command != null && command !is VoiceCommand.Call && command !is VoiceCommand.Navigate && command !is VoiceCommand.AddStop) {
+        if (vad == null && command != null && command !is VoiceCommand.Call && command !is VoiceCommand.Navigate &&
+            command !is VoiceCommand.AddStop && command !is VoiceCommand.Reply
+        ) {
             main.postDelayed(runPending, STABLE_MS)
         }
     }
 
     private fun finish(understood: Boolean) {
         if (_state.value !is VoiceState.Listening) return
+        if (question != null && route?.cloud != true) {
+            answerQuestion(heard)
+            return
+        }
+        if (route?.cloud == true) {
+            decideOnline("recognizer done")
+            return
+        }
         val command = pendingCommand
         if (understood && command != null) {
             execute(command)
@@ -294,7 +621,7 @@ object VoiceAssistant {
                 null -> voiceText(R.string.voice_not_understood, heard)
             }
         }
-        EventLog.log("Voice: not understood after ${SystemClock.elapsedRealtime() - startedAt} ms")
+        EventLog.log("Voice: not understood after ${SystemClock.elapsedRealtime() - startedAt} ms: \"$heard\"")
         show(VoiceState.Done(heard, message, understood = false), speak = true)
     }
 
@@ -313,10 +640,54 @@ object VoiceAssistant {
             it.destroy()
         }
         EventLog.log("Voice: no on-device model for ${AppLocales.voice(appContext).toLanguageTag()}, using the phone's speech service")
-        val rec = SpeechRecognizer.createSpeechRecognizer(appContext)
+        val rec = speechService()
         recognizer = rec
         rec.setRecognitionListener(listener)
         rec.startListening(intent)
+    }
+
+    /** Google's recognizer when installed: the phone's default may only know Chinese (Xiaomi's on China ROMs). */
+    private fun speechService(): SpeechRecognizer {
+        val google = appContext.packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+            .map { it.serviceInfo }.firstOrNull { it.packageName in GoogleRecognizers }
+        if (google == null) return SpeechRecognizer.createSpeechRecognizer(appContext)
+        val component = ComponentName(google.packageName, google.name)
+        holdWithMicrophone(component)
+        return SpeechRecognizer.createSpeechRecognizer(appContext, component)
+    }
+
+    private var hold: ServiceConnection? = null
+    private var peakRms = -100f
+
+    /**
+     * The speech app may record only while "in use", and on the car screen nothing of it is: bound by us with our
+     * capabilities (our microphone service), it should count as in use while it listens. HyperOS silenced it otherwise.
+     * ponytail: an experiment, unverified; a recognizer of our own on the car's microphone if it doesn't hold.
+     */
+    private fun holdWithMicrophone(component: ComponentName) {
+        if (hold != null) return
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) = Unit
+            override fun onServiceDisconnected(name: ComponentName?) = Unit
+        }
+        val bound = runCatching {
+            appContext.bindService(
+                Intent(RecognitionService.SERVICE_INTERFACE).setComponent(component), connection,
+                Context.BIND_AUTO_CREATE or Context.BIND_INCLUDE_CAPABILITIES,
+            )
+        }.getOrDefault(false)
+        if (bound) hold = connection
+        EventLog.log("Voice: speech app ${if (bound) "held with our microphone" else "not held"}")
+    }
+
+    /** The phone's speech app has no such language at all (Arabic on some phones): no download will help. */
+    private fun languageMissing() {
+        if (_state.value !is VoiceState.Listening) return
+        EventLog.log("Voice: the speech app has no ${AppLocales.voice(appContext).toLanguageTag()}")
+        stopRecognition()
+        restoreMusic()
+        Speech.cancelTone()
+        show(VoiceState.Done("", voiceText(R.string.voice_language_missing), understood = false), speak = false)
     }
 
     /** The voice language has no on-device model (e.g. the language was changed): it is fetched for next time. */
@@ -336,7 +707,8 @@ object VoiceAssistant {
     }
 
     private fun execute(command: VoiceCommand) {
-        if (_state.value !is VoiceState.Listening) return
+        // Listening, or thinking online
+        if (_state.value !is VoiceState.Listening && _state.value !is VoiceState.Searching) return
         EventLog.log("Voice: ${command::class.simpleName} after ${SystemClock.elapsedRealtime() - startedAt} ms")
         stopRecognition()
         val settings = LauncherSettings.get(appContext)
@@ -382,12 +754,12 @@ object VoiceAssistant {
             }
             VoiceCommand.Next -> {
                 resumeMusic = true
-                NowPlaying.next()
+                NowPlaying.skipNext()
                 done(voiceText(R.string.voice_next), speak = false)
             }
             VoiceCommand.Previous -> {
                 resumeMusic = true
-                NowPlaying.previous()
+                NowPlaying.skipPrevious()
                 done(voiceText(R.string.voice_previous), speak = false)
             }
             is VoiceCommand.Open -> {
@@ -399,17 +771,42 @@ object VoiceAssistant {
                 done(voiceText(if (command.on) R.string.voice_quiet_on else R.string.voice_quiet_off))
             }
             VoiceCommand.ReadNotifications -> {
-                val list = CarNotifications.visible(CarNotifications.all.value, settings).take(3)
-                val text = if (list.isEmpty()) voiceText(R.string.voice_no_notifications)
-                // With the privacy setting on, only who wrote and from which app
-                else if (NotificationContent.hiddenNow(settings)) list.joinToString(". ") { n -> "${n.title}, ${n.appLabel}" }
-                else list.joinToString(". ") { n -> "${n.title}: ${n.last?.text.orEmpty()}" }
-                // The music comes back after the reading
-                done(text)
+                // Who wrote and what (only who with the privacy setting on, never a code), then maybe a reply to the newest
+                val reading = MessageReader.reading(appContext)
+                if (reading == null) {
+                    done(voiceText(R.string.voice_no_notifications))
+                } else {
+                    show(VoiceState.Done(heard, reading.text, understood = true), speak = false, showMs = DONE_SHOW_MS + reading.text.length * 60L)
+                    if (settings.voiceReplies.value) MessageReader.speak(appContext, reading)
+                }
+            }
+            is VoiceCommand.Reply -> {
+                // "رد" while the phone rings: the call, not a message
+                if (command.contact == null && command.text.isBlank() && Calls.current.value?.phase == CallPhase.RINGING) {
+                    resumeMusic = false
+                    _state.value = VoiceState.Idle
+                    Calls.answer()
+                    return
+                }
+                val target = MessageReader.target(appContext, command.contact)
+                when {
+                    target == null -> done(
+                        command.contact?.let { voiceText(R.string.voice_reply_no_message, titleCase(it)) } ?: voiceText(R.string.voice_reply_none),
+                    )
+                    command.text.isBlank() -> {
+                        // Nothing dictated yet: asked for, like after a message read aloud
+                        _state.value = VoiceState.Idle
+                        restoreMusic()
+                        MessageReader.askReply(appContext, target)
+                        return
+                    }
+                    MessageReader.send(appContext, target, command.text) -> done(voiceText(R.string.voice_reply_sent_to, target.title))
+                    else -> done(voiceText(R.string.voice_reply_failed))
+                }
             }
             VoiceCommand.Cancel -> {
-                restoreMusic()
-                _state.value = VoiceState.Idle
+                // "Nothing, close": gone at once, like the Cancel button, with no reply
+                cancel()
                 return
             }
             is VoiceCommand.Navigate -> {
@@ -436,6 +833,33 @@ object VoiceAssistant {
                 } else {
                     done(voiceText(R.string.voice_no_navigation))
                 }
+            }
+            is VoiceCommand.AcPower -> car("hvac.power", { put("on", command.on) }) {
+                voiceText(if (command.on) R.string.voice_ac_on else R.string.voice_ac_off)
+            }
+            VoiceCommand.AcAuto -> car("hvac.auto", { put("on", true) }) { voiceText(R.string.voice_ac_auto) }
+            is VoiceCommand.AcTemp -> car("hvac.temp", { if (command.value != null) put("value", command.value) else put("delta", command.delta) }) {
+                val value = it.optDouble("value", Double.NaN)
+                if (value.isNaN()) voiceText(R.string.voice_ac_temp_plain) else voiceText(R.string.voice_ac_temp, formatDegrees(value))
+            }
+            is VoiceCommand.Fan -> car("hvac.fan", { put("delta", command.delta) }) {
+                voiceText(if (command.delta > 0) R.string.voice_fan_up else R.string.voice_fan_down)
+            }
+            is VoiceCommand.Volume -> car("volume", { put("dir", command.dir) }) {
+                voiceText(
+                    when (command.dir) {
+                        "up" -> R.string.voice_volume_up
+                        "down" -> R.string.voice_volume_down
+                        "mute" -> R.string.voice_mute
+                        else -> R.string.voice_unmute
+                    },
+                )
+            }
+            VoiceCommand.Tires -> car("tires") { tiresAnswer(it) }
+            VoiceCommand.Trips -> {
+                Destinations.init(appContext)
+                val trips = Destinations.recents.value.take(5)
+                done(if (trips.isEmpty()) voiceText(R.string.voice_no_trips) else voiceText(R.string.voice_trips, trips.joinToString("\n") { "• ${it.name}" }))
             }
         }
         restoreMusic()
@@ -511,22 +935,260 @@ object VoiceAssistant {
         }
     }
 
+    /**
+     * A request to the car through our head unit app ([CarControl]); [answer] makes the reply from the car's answer.
+     * No head unit of ours, or no answer: said so.
+     */
+    private fun car(op: String, fields: org.json.JSONObject.() -> Unit = {}, answer: (org.json.JSONObject) -> String) {
+        scope.launch {
+            val reply = CarControl.request(op, fields)
+            done(
+                when {
+                    reply == null -> voiceText(R.string.voice_car_unreachable)
+                    !reply.optBoolean("ok") -> voiceText(R.string.voice_car_refused)
+                    else -> answer(reply)
+                },
+            )
+        }
+    }
+
+    private fun formatDegrees(value: Double) = if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+
+    /** Each tyre's pressure in bar; all fine unless the car warns about one or one is far from the usual 2.0-3.0 bar. */
+    private fun tiresAnswer(reply: org.json.JSONObject): String {
+        val tires = reply.optJSONArray("tires") ?: return voiceText(R.string.voice_car_refused)
+        val names = mapOf("FL" to R.string.voice_tire_fl, "FR" to R.string.voice_tire_fr, "RL" to R.string.voice_tire_rl, "RR" to R.string.voice_tire_rr)
+        var check = false
+        val lines = (0 until tires.length()).map { i ->
+            val tire = tires.getJSONObject(i)
+            val bar = tire.optDouble("kpa", Double.NaN) / 100.0
+            if (tire.optBoolean("warning") || bar.isNaN() || bar < 2.0 || bar > 3.0) check = true
+            val name = names[tire.optString("pos")]?.let { voiceText(it) } ?: tire.optString("pos")
+            if (bar.isNaN()) "$name: ?" else "$name: ${"%.1f".format(bar)} bar"
+        }
+        return voiceText(if (check) R.string.voice_tires_check else R.string.voice_tires_ok, lines.joinToString(" · "))
+    }
+
     private fun done(message: String, speak: Boolean = true) {
         show(VoiceState.Done(heard, message, understood = true), speak = speak)
     }
 
-    private fun show(state: VoiceState, speak: Boolean) {
+    private fun show(state: VoiceState, speak: Boolean, showMs: Long? = null) {
         _state.value = state
         if (state is VoiceState.Done) {
             if (speak && LauncherSettings.get(appContext).voiceReplies.value) Speech.say(appContext, state.message)
             main.removeCallbacks(backToIdle)
-            main.postDelayed(backToIdle, if (state.understood) DONE_SHOW_MS else FAILED_SHOW_MS)
+            main.postDelayed(backToIdle, showMs ?: if (state.understood) DONE_SHOW_MS else FAILED_SHOW_MS)
         }
+    }
+
+    // ---- Online --------------------------------------------------------------------------------------------------
+
+    /** Greetings made by the Gemini voice, kept for the next turns (one round trip, then instant). */
+    private val greetings = java.util.concurrent.ConcurrentHashMap<String, Pair<ShortArray, Int>>()
+
+    /**
+     * The greeting before the microphone opens: a recorded one for the time of day with the driver's name when the
+     * build has it ("morning.p1.ogg"), else online one made by the Gemini voice ("صباح الخير يا …", made in the
+     * background the first time, so that turn uses a plain recording), else any recorded greeting. False: none.
+     */
+    private fun greet(then: () -> Unit): Boolean {
+        val part = Persona.dayPart(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
+        if (Speech.greet(appContext, part.key, then)) return true
+        val settings = LauncherSettings.get(appContext)
+        if (route?.cloud == true && settings.voiceReplies.value) {
+            val who = Persona.callName(settings.driverName.value, settings.nicknames.value)
+            val arabic = AppLocales.voice(appContext).language == "ar"
+            val voice = settings.geminiVoice.value.apiName
+            val id = "${part.key}|$voice|$who|$arabic"
+            greetings[id]?.let { (pcm, rate) ->
+                CloudSpeech.playGreeting(pcm, rate, then)
+                return true
+            }
+            scope.launch(Dispatchers.IO) {
+                CloudSpeech.synthesize(BuildConfig.GEMINI_KEY, voice, Persona.greeting(part, who, arabic), arabic)?.let { greetings[id] = it }
+            }
+        }
+        return Speech.greet(appContext) { then() }
+    }
+
+    private fun hasKeys() = BuildConfig.GEMINI_KEY.isNotBlank() && BuildConfig.ANTHROPIC_KEY.isNotBlank()
+
+    private fun internet(): Boolean {
+        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    /** Gemini gets what was recorded so far (16 kHz mono WAV); once per turn. */
+    private fun startTranscription() {
+        if (stt != null) return
+        val (rate, channels) = source ?: return
+        val pcm = synchronized(capture) { capture.toByteArray() }
+        val model = LauncherSettings.get(appContext).sttModel.value.id
+        stt = scope.async(Dispatchers.IO) {
+            val wav = WavEncoder.encode(pcm, rate, channels)
+            EventLog.log("Voice online: ${wav.size / 1024} kB of speech to $model")
+            gemini.transcribe(BuildConfig.GEMINI_KEY, model, wav) { sttCall = it }
+        }
+    }
+
+    private fun cancelTranscription() {
+        sttCall?.cancel()
+        sttCall = null
+        stt?.cancel()
+        stt = null
+    }
+
+    /** The end of an online-capable turn: a clear local command runs now, anything else goes online. */
+    private fun decideOnline(why: String) {
+        val way = route ?: return
+        if (decided || _state.value !is VoiceState.Listening) return
+        decided = true
+        main.removeCallbacks(finalWait)
+        if (question != null) {
+            // The answer's words, as Gemini hears them; no command, no Claude
+            if (vad?.speaking != true && heard.isBlank()) answerQuestion(null) else goOnline(null)
+            return
+        }
+        val command = heard.takeIf { it.isNotBlank() }?.let(parser::parse)
+        val since = if (vadEndAt > 0) SystemClock.elapsedRealtime() - vadEndAt else -1
+        if (way.localFirst && Brain.fastPath(command, recentPlaces())) {
+            EventLog.log("Voice: fast path, ${command!!::class.simpleName} $since ms after the end of speech")
+            cancelTranscription()
+            memory.add(heard, "[${command::class.simpleName}]")
+            execute(command)
+            return
+        }
+        if (vad?.speaking != true && heard.isBlank()) {
+            // Nothing said: the usual "I didn't hear anything"
+            route = null
+            cancelTranscription()
+            finish(understood = false)
+            return
+        }
+        EventLog.log("Voice: cloud path ($why, $since ms after the end of speech; the phone heard \"$heard\" → ${command?.let { it::class.simpleName } ?: "no command"})")
+        goOnline(command)
+    }
+
+    private fun goOnline(offline: VoiceCommand?) {
+        startTranscription()
+        val transcription = stt ?: return fallBack(offline, "nothing recorded")
+        val id = turn
+        val start = vadEndAt.takeIf { it > 0 } ?: SystemClock.elapsedRealtime()
+        stopRecognition()
+        show(VoiceState.Searching(heard, voiceText(R.string.voice_thinking)), speak = false)
+        val settings = LauncherSettings.get(appContext)
+        search = scope.launch {
+            fun current() = id == turn && _state.value is VoiceState.Searching
+            val text = try {
+                transcription.await()
+            } catch (e: Exception) {
+                if (current()) fallBack(offline, "speech to text failed: ${e.message}")
+                return@launch
+            }
+            val sttMs = SystemClock.elapsedRealtime() - start
+            EventLog.log("Voice online: speech to text $sttMs ms after the end of speech")
+            if (!current()) return@launch
+            if (text.isBlank()) {
+                fallBack(offline, "Gemini heard nothing")
+                return@launch
+            }
+            heard = text
+            if (question != null) {
+                answerQuestion(text)
+                return@launch
+            }
+            _state.value = VoiceState.Searching(text, voiceText(R.string.voice_thinking))
+            // The contacts' names let Claude match a name heard in another script; capped (they go to Anthropic)
+            val names = contacts.take(MAX_CONTACTS_ONLINE).map { it.name }
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    val persona = Persona.prompt(settings.driverName.value, settings.nicknames.value)
+                    claude.decide(BuildConfig.ANTHROPIC_KEY, settings.claudeModel.value.id, text, names, memory.history(), parser::callCommand, persona) {
+                        EventLog.log("Voice online: Claude's first token ${SystemClock.elapsedRealtime() - start} ms after the end of speech")
+                    }
+                }
+            } catch (e: Exception) {
+                // Claude failed or took too long: the phone's parser on Gemini's (better) words
+                if (current()) fallBack(parser.parse(text) ?: offline, "Claude failed: ${e.message}")
+                return@launch
+            }
+            if (!current()) return@launch
+            EventLog.log("Voice online: ${result::class.simpleName} ${SystemClock.elapsedRealtime() - start} ms after the end of speech")
+            when (result) {
+                is CloudResult.Command -> {
+                    memory.add(text, "[${result.command::class.simpleName}]")
+                    execute(result.command)
+                }
+                is CloudResult.Answer -> {
+                    memory.add(text, result.text)
+                    answer(result.text, start)
+                }
+                CloudResult.NotUnderstood -> notUnderstoodOnline()
+            }
+        }
+    }
+
+    /** An online step failed: the phone's own command when it has one, else a miss, else listening again offline. */
+    private fun fallBack(command: VoiceCommand?, why: String) {
+        EventLog.log("Voice: offline fallback ($why)")
+        // A question takes what the phone heard, or nothing
+        if (question != null) return answerQuestion(heard)
+        route = null
+        _online.value = false
+        when {
+            command != null -> execute(command)
+            heard.isNotBlank() -> notUnderstoodOnline()
+            else -> listenAgainOffline()
+        }
+    }
+
+    private fun listenAgainOffline() {
+        if (!hasRecognizer) {
+            show(VoiceState.Done("", voiceText(R.string.voice_unavailable), understood = false), speak = false)
+            return
+        }
+        stopRecognition()
+        heard = ""
+        pendingCommand = null
+        startedAt = SystemClock.elapsedRealtime()
+        Speech.chime()
+        listen(onDeviceRecognizer)
+    }
+
+    private fun notUnderstoodOnline() {
+        stopRecognition()
+        restoreMusic()
+        Speech.cancelTone()
+        val message = if (heard.isBlank()) voiceText(R.string.voice_nothing_heard) else voiceText(R.string.voice_not_understood, heard)
+        show(VoiceState.Done(heard, message, understood = false), speak = true)
+    }
+
+    /** Claude's own answer: shown, and spoken by the Gemini voice (the phone's voice if Gemini can't). */
+    private fun answer(text: String, start: Long) {
+        restoreMusic()
+        show(VoiceState.Done(heard, text, understood = true), speak = false, showMs = DONE_SHOW_MS + text.length * 60L)
+        val settings = LauncherSettings.get(appContext)
+        if (!settings.voiceReplies.value) return
+        val arabic = text.any { it in '\u0600'..'\u06FF' }
+        scope.launch(Dispatchers.IO) {
+            val spoken = CloudSpeech.speak(BuildConfig.GEMINI_KEY, settings.geminiVoice.value.apiName, text, arabic) {
+                EventLog.log("Voice online: answer audio starts ${SystemClock.elapsedRealtime() - start} ms after the end of speech")
+            }
+            if (!spoken) main.post { Speech.say(appContext, text) }
+        }
+    }
+
+    private fun recentPlaces(): List<String> {
+        Destinations.init(appContext)
+        return Destinations.recents.value.mapNotNull { it.name }
     }
 
     private fun stopRecognition() {
         main.removeCallbacks(runPending)
         main.removeCallbacks(giveUp)
+        main.removeCallbacks(finalWait)
         recognizer?.let {
             it.setRecognitionListener(null)
             runCatching { it.cancel() }
@@ -534,13 +1196,15 @@ object VoiceAssistant {
         }
         recognizer = null
         request = null
+        hold?.let { runCatching { appContext.unbindService(it) } }
+        hold = null
         CarMicrophone.stop()
-        feed?.offer(ByteArray(0))
-        feed = null
+        stopFeed()
     }
 
     /** Examples from the driver's own world: an artist they listen to and a contact of theirs, picked at random. */
     private fun hint(): String {
+        question?.let { return it.hint }
         val examples = listOfNotNull(
             NowPlaying.recentArtists.randomOrNull()?.let { voiceText(R.string.voice_example_play, it) },
             contacts.randomOrNull()?.let { voiceText(R.string.voice_example_call, it.name) },
@@ -578,12 +1242,27 @@ object VoiceAssistant {
 
     private val Biasing = listOf("chiama", "metti", "pausa", "avanti", "indietro", "apri", "cellulare", "casa", "lavoro")
 
-    private const val STABLE_MS = 550L
-    private const val MAX_LISTEN_MS = 9_000L
+    // A pause of a second and a half before a command that holds still is run: the driver may not be done
+    private const val STABLE_MS = 1_500L
+    private const val MAX_LISTEN_MS = 15_000L
+    /** The silence that ends a sentence, asked of the recognizer. */
+    private const val SILENCE_MS = 2_000L
     private const val DONE_SHOW_MS = 2_500L
     private const val FAILED_SHOW_MS = 3_500L
     private const val CALL_DELAY_MS = 3_000L
     private const val END_GRACE_MS = 300L
+    /** The silence after speech that the VAD takes for the end of the sentence. */
+    private const val VAD_SILENCE_MS = 1_400L
+    /** The same when the turn may go online: every pause adds to the wait for the answer. */
+    private const val CLOUD_VAD_SILENCE_MS = 1_000L
+    /** How long the phone's recognizer has, after the end of speech, for its last words before we go on without. */
+    private const val FINAL_WAIT_MS = 700L
+    private const val MAX_CONTACTS_ONLINE = 200
+    /** 15 s of 48 kHz stereo at most. */
+    private const val MAX_CAPTURE_BYTES = 15 * 48_000 * 2 * 2
     private const val CHOICE_TIMEOUT_MS = 8_000L
     private const val SEARCH_CHECK_MS = 2_500L
+
+    /** Speech Services by Google, then the Google app. */
+    private val GoogleRecognizers = listOf("com.google.android.tts", "com.google.android.googlequicksearchbox")
 }

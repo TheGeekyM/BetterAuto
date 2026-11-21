@@ -15,6 +15,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
 /**
@@ -122,16 +125,21 @@ object CarZones {
 
 /**
  * One zone for the knob's nudges (see [CarZones]): entering it lands on the control last focused there,
- * the first one the first time, whether the knob turned or was nudged into it.
+ * the first one the first time, whether the knob turned or was nudged into it. [bottomCovered]: how much of its
+ * bottom a floating bar (its own zone) covers, so a nudge down from here still finds that bar.
  */
 @OptIn(ExperimentalComposeUiApi::class)
-fun Modifier.carZone(): Modifier = composed {
+fun Modifier.carZone(bottomCovered: Dp = 0.dp): Modifier = composed {
     val zone = remember { CarZones.Zone() }
+    val covered = with(LocalDensity.current) { bottomCovered.toPx() }
     DisposableEffect(zone) {
         CarZones.add(zone)
         onDispose { CarZones.remove(zone) }
     }
-    onGloballyPositioned { zone.bounds = it.boundsInRoot() }
+    onGloballyPositioned {
+        val bounds = it.boundsInRoot()
+        zone.bounds = if (covered > 0f) bounds.copy(bottom = maxOf(bounds.top, bounds.bottom - covered)) else bounds
+    }
         .onFocusChanged {
             zone.hasFocus = it.hasFocus
             if (it.hasFocus) CarZones.focused(zone)

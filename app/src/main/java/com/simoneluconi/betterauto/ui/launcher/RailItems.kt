@@ -11,6 +11,7 @@ val RailItem.icon: ImageVector
     get() = when (this) {
         RailItem.HOME -> CarIcons.Home
         RailItem.MUSIC -> CarIcons.Music
+        RailItem.RADIO -> CarIcons.Radio
         RailItem.MAP -> CarIcons.Map
         RailItem.PHONE -> CarIcons.Phone
         RailItem.VEHICLE -> CarIcons.Car
@@ -22,6 +23,7 @@ val RailItem.label: Int
     get() = when (this) {
         RailItem.HOME -> R.string.nav_home
         RailItem.MUSIC -> R.string.nav_music
+        RailItem.RADIO -> R.string.widget_radio
         RailItem.MAP -> R.string.nav_map
         RailItem.PHONE -> R.string.nav_phone
         RailItem.VEHICLE -> R.string.nav_vehicle

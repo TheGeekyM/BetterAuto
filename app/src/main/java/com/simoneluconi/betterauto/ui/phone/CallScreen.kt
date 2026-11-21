@@ -45,6 +45,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.formatTime
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.delay
 
 /**
@@ -58,8 +59,8 @@ fun CallScreen(call: CallInfo, primaryFocus: FocusRequester, modifier: Modifier 
     val ringing = call.phase == CallPhase.RINGING
 
     BoxWithConstraints(
+        // No page of its own: the call sits on the launcher's backdrop like every screen
         modifier
-            .background(colors.bg)
             .padding(32.dp)
             .onKeyEvent { event ->
                 if (event.key != Key.Back && event.key != Key.Escape) return@onKeyEvent false
@@ -191,7 +192,7 @@ private fun MinimizeButton(modifier: Modifier) {
     Box(
         modifier
             .carClickable(CircleShape, stringResource(R.string.call_minimize)) { Calls.minimized.value = true }
-            .background(colors.surface, CircleShape)
+            .glass(CircleShape)
             .size(56.dp),
         contentAlignment = Alignment.Center,
     ) {

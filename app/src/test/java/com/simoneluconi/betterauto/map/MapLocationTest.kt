@@ -2,6 +2,7 @@ package com.simoneluconi.betterauto.map
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Which way the car's arrow points, and where it goes without a GPS. */
@@ -85,5 +86,51 @@ class MapLocationTest {
     fun turnsWrapAroundNorth() {
         assertEquals(20.0, turnDeg(350f, 10f), 1e-9)
         assertEquals(-20.0, turnDeg(10f, 350f), 1e-9)
+    }
+
+    @Test
+    fun aLiveGpsFixIsUsed() {
+        assertEquals(PhoneVerdict.USE, phoneFixVerdict(primary = true, ageMs = 300, accuracyM = 6f, sinceGpsMs = 1_000, estimating = false))
+        // A GPS that does not say how good it is still is the GPS
+        assertEquals(PhoneVerdict.USE, phoneFixVerdict(primary = true, ageMs = 300, accuracyM = null, sinceGpsMs = null, estimating = false))
+    }
+
+    @Test
+    fun aFixDeliveredLateIsWhereTheCarWas() {
+        // A remembered or batched position, even a precise one, is not where the car is now
+        assertEquals(PhoneVerdict.OLD, phoneFixVerdict(primary = true, ageMs = 30_000, accuracyM = 5f, sinceGpsMs = null, estimating = false))
+        assertEquals(PhoneVerdict.OLD, phoneFixVerdict(primary = false, ageMs = 6_000, accuracyM = 20f, sinceGpsMs = null, estimating = false))
+    }
+
+    @Test
+    fun aVagueFixDoesNotMoveTheCar() {
+        // A network guess hundreds of metres off would put the car on another road, or in the sea
+        assertEquals(PhoneVerdict.VAGUE, phoneFixVerdict(primary = false, ageMs = 200, accuracyM = 900f, sinceGpsMs = 60_000, estimating = false))
+        assertEquals(PhoneVerdict.VAGUE, phoneFixVerdict(primary = true, ageMs = 200, accuracyM = 300f, sinceGpsMs = null, estimating = false))
+        // A network fix that does not say how good it is
+        assertEquals(PhoneVerdict.VAGUE, phoneFixVerdict(primary = false, ageMs = 200, accuracyM = null, sinceGpsMs = null, estimating = false))
+    }
+
+    @Test
+    fun theNetworkCountsOnlyWhileTheGpsIsQuiet() {
+        assertEquals(PhoneVerdict.GPS_BETTER, phoneFixVerdict(primary = false, ageMs = 200, accuracyM = 30f, sinceGpsMs = 1_000, estimating = false))
+        assertEquals(PhoneVerdict.USE, phoneFixVerdict(primary = false, ageMs = 200, accuracyM = 30f, sinceGpsMs = 20_000, estimating = false))
+        // No GPS fix yet (a garage, a bench indoors): a good enough network fix shows where the car is
+        assertEquals(PhoneVerdict.USE, phoneFixVerdict(primary = false, ageMs = 200, accuracyM = 40f, sinceGpsMs = null, estimating = false))
+    }
+
+    @Test
+    fun onlyAGoodFixEndsTheEstimate() {
+        assertEquals(PhoneVerdict.VAGUE, phoneFixVerdict(primary = true, ageMs = 200, accuracyM = 80f, sinceGpsMs = 10_000, estimating = true))
+        assertEquals(PhoneVerdict.USE, phoneFixVerdict(primary = true, ageMs = 200, accuracyM = 15f, sinceGpsMs = 10_000, estimating = true))
+    }
+
+    @Test
+    fun aQuietGpsIsAskedAgainLaterEachTime() {
+        // A first fix may take half a minute: not started over too soon
+        assertTrue(MapLocation.phoneSilentMs(hadFix = false, reasked = 0) >= 30_000)
+        assertEquals(10_000L, MapLocation.phoneSilentMs(hadFix = true, reasked = 0))
+        assertEquals(20_000L, MapLocation.phoneSilentMs(hadFix = true, reasked = 1))
+        assertEquals(60_000L, MapLocation.phoneSilentMs(hadFix = true, reasked = 20))
     }
 }

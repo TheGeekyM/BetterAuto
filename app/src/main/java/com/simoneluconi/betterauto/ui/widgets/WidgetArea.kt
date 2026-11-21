@@ -1,6 +1,10 @@
 package com.simoneluconi.betterauto.ui.widgets
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -38,6 +42,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -62,6 +73,7 @@ import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.LocalContentFocus
 import com.simoneluconi.betterauto.ui.launcher.carZone
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -75,8 +87,11 @@ val LocalProjected = staticCompositionLocalOf { false }
 
 /**
  * Home screen: the widgets as the driver arranged them ([HomeArrangement]), the one kept for this kind of screen.
- * A screen too small for all of them puts the ones that don't fit a swipe away, never cut. Holding a widget
- * (finger or knob center) opens the edit mode ([HomeEdit]).
+ * A screen too small for all of them puts the ones that don't fit a swipe away, never cut. A tap on a widget (or a
+ * press of the knob on it) makes it the main one: it glides into the biggest place, what was there into its own,
+ * and the home is saved so. A double tap (double press, or holding the knob) opens its page
+ * ([HomeWidgetKind.section]); the widget's own buttons and lists keep their taps. Holding a widget with a finger
+ * (or the knob on one of its buttons, or on a widget without a page) opens the edit mode ([HomeEdit]).
  */
 @Composable
 fun WidgetArea(settings: LauncherSettings, modifier: Modifier = Modifier) {
@@ -109,28 +124,47 @@ fun WidgetArea(settings: LauncherSettings, modifier: Modifier = Modifier) {
             return@BoxWithConstraints
         }
         val saved by settings.home(shape).collectAsStateWithLifecycle()
-        // While the finger drags a line: saved when it lifts
+        // While the finger drags a line: saved when it lifts, dropped once the saved home has it (no frame of the old
+        // sizes between, which the widgets would start gliding back to)
         var dragged by remember { mutableStateOf<HomeArrangement?>(null) }
+        LaunchedEffect(saved) { dragged = null }
         val home = dragged ?: saved
         val fitted = remember(home, width, height) {
             val (lines, perLine) = HomeRoom.of(home.rows, width, height, HomeGap.value)
             home.fit(lines, perLine)
         }
-        // A new arrangement fades in; a line dragged only moves the sizes
+        // Place [index] of what the screen shows becomes the main one, saved at once (never during a drag)
+        val promote: (Int) -> Unit = promote@{ index ->
+            if (dragged != null) return@promote
+            val now = settings.home(shape).value
+            val (lines, perLine) = HomeRoom.of(now.rows, width, height, HomeGap.value)
+            val shown = now.fit(lines, perLine)
+            val next = now.promoted(index, shown)
+            if (next === now) return@promote
+            StackMemory.swap(index, shown.mainPlace())
+            settings.setHome(shape, next)
+        }
+        // A new arrangement fades in; a line dragged or a widget made main only moves the widgets
+        val look = HomeLook(fitted)
         AnimatedContent(
-            targetState = fitted.evenSizes(),
+            targetState = look,
             transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
             modifier = Modifier.fillMaxSize(),
             label = "homeLayout",
-        ) { structure ->
-            val drawn = if (structure == fitted.evenSizes()) fitted else structure
+        ) { shownLook ->
+            val drawn = if (shownLook == look) fitted else shownLook.home
             val geometry = HomeGeometry(drawn, width, height, HomeGap.value, mirrored)
+            val biggest = drawn.mainPlace()
             CompositionLocalProvider(LocalSettings provides settings) {
                 Box(Modifier.fillMaxSize()) {
                     drawn.places.forEachIndexed { index, place ->
-                        val area = geometry.places[index]
-                        key(index, place.pages) {
-                            Widget(index, place.pages, Modifier.offset(area.x.dp, area.y.dp).size(area.width.dp, area.height.dp))
+                        // Keyed by what it shows, not where: a widget made main keeps its state (the map, focus) as it moves
+                        key(place.pages) {
+                            Widget(
+                                index, place.pages, main = index == biggest, onPromote = { promote(index) },
+                                // The main one drawn on top: a widget made main grows over its neighbours, not under them
+                                Modifier.zIndex(if (index == biggest) 1f else 0f).glideTo(geometry.places[index], instant = dragged != null),
+                            )
                         }
                     }
                 }
@@ -143,10 +177,44 @@ fun WidgetArea(settings: LauncherSettings, modifier: Modifier = Modifier) {
                 HomeGeometry(home, width, height, HomeGap.value, mirrored),
                 onMove = { divider, share -> dragged = (dragged ?: saved).resized(divider, share) },
             ) {
-                dragged?.let { settings.setHome(shape, it) }
-                dragged = null
+                val final = dragged
+                if (final == null || final == saved) dragged = null else settings.setHome(shape, final)
             }
         }
+    }
+}
+
+/**
+ * An arrangement as the home's fade sees it: which widgets it holds and how many places each line has. The sizes and
+ * which place holds what are left out, so a line dragged or a widget made main moves the widgets instead of
+ * fading the whole home; [home] is what to draw while it fades out.
+ */
+private class HomeLook(val home: HomeArrangement) {
+    private val key = Triple(home.rows, home.lines.map { it.places.size }, home.places.map { it.pages }.toSet())
+
+    override fun equals(other: Any?): Boolean = other is HomeLook && other.key == key
+
+    override fun hashCode(): Int = key.hashCode()
+}
+
+/** How long a widget takes to glide to its new place and size. */
+private const val GLIDE_MS = 380
+
+/**
+ * A place's position and size ([area], dp), gliding there when it changes (a widget made main, the screen's size),
+ * straight there when [instant] (a line under the finger). Read at layout, so the glide doesn't recompose the widget.
+ */
+private fun Modifier.glideTo(area: Area, instant: Boolean): Modifier = composed {
+    val spec: AnimationSpec<Float> = if (instant) snap() else tween(GLIDE_MS, easing = FastOutSlowInEasing)
+    val x = animateFloatAsState(area.x, spec, label = "placeX")
+    val y = animateFloatAsState(area.y, spec, label = "placeY")
+    val w = animateFloatAsState(area.width, spec, label = "placeWidth")
+    val h = animateFloatAsState(area.height, spec, label = "placeHeight")
+    layout { measurable, _ ->
+        val width = w.value.dp.roundToPx().coerceAtLeast(0)
+        val height = h.value.dp.roundToPx().coerceAtLeast(0)
+        val placeable = measurable.measure(Constraints.fixed(width, height))
+        layout(width, height) { placeable.place(x.value.dp.roundToPx(), y.value.dp.roundToPx()) }
     }
 }
 
@@ -206,19 +274,56 @@ private fun DividerHandle(divider: HomeDivider, onMove: (HomeDivider, Float) -> 
 private val GripLength = 56.dp
 private val GripWidth = 6.dp
 
+/**
+ * One place of the home. [main]: it is the biggest place, where a tap no longer moves it; [onPromote] makes it so.
+ */
 @Composable
-private fun Widget(slot: Int, pages: List<WidgetChoice>, modifier: Modifier) {
+private fun Widget(slot: Int, pages: List<WidgetChoice>, main: Boolean, onPromote: () -> Unit, modifier: Modifier) {
     val settings = LocalSettings.current ?: return
     val hold = remember(settings) { { HomeEdit.start(settings) } }
-    // Its buttons take the hold through LocalHoldAction; the rest of the card here
+    // Its buttons take the hold through LocalHoldAction; the rest of the card is the card's own control
     // Each widget is one zone for the knob's nudges; a stack has two, its card and its dots under it
     val stack = pages.size > 1
-    Box(modifier.pointerInput(Unit) { detectTapGestures(onLongPress = { hold() }) }.then(if (stack) Modifier else Modifier.carZone())) {
+    val first = pages.firstOrNull() ?: return
+    Box(
+        if (stack) modifier.pointerInput(Unit) { detectTapGestures(onLongPress = { hold() }) }
+        else modifier.carZone().widgetCard(first, main, onPromote, hold),
+    ) {
         CompositionLocalProvider(LocalHoldAction provides hold) {
-            if (stack) WidgetStack(slot, pages, settings)
-            else pages.firstOrNull()?.let { HomeWidget(it, settings, Modifier.fillMaxSize()) }
+            if (stack) WidgetStack(slot, pages, settings, main, onPromote, hold)
+            else HomeWidget(first, settings, Modifier.fillMaxSize())
         }
     }
+}
+
+/** The corners of the widgets' cards, for the knob's ring and the press around a whole widget. */
+private val CardShape = RoundedCornerShape(32.dp)
+
+/**
+ * A whole widget as one control, under its own buttons (which keep their taps): a tap or a knob press makes it the
+ * main one (nothing when it is already), a double tap, double press or held knob opens its page (when it has one;
+ * the single tap then waits the double-tap time). A held finger edits the home.
+ */
+private fun Modifier.widgetCard(choice: WidgetChoice, main: Boolean, onPromote: () -> Unit, hold: () -> Unit): Modifier = composed {
+    val settings = LocalSettings.current
+    val context = LocalContext.current
+    val name = remember(choice) { HomeWidgets.label(context, choice) }
+    val section = HomeWidgets.kind(choice.type)?.section
+    val open: (() -> Unit)? = if (section != null && settings != null) {
+        { settings.setSection(section) }
+    } else null
+    val label = when {
+        !main && open != null -> stringResource(R.string.home_widget_card, name)
+        !main -> stringResource(R.string.home_widget_card_no_page, name)
+        open != null -> stringResource(R.string.home_widget_card_main, name)
+        else -> stringResource(R.string.home_widget_card_main_no_page, name)
+    }
+    val openLabel = stringResource(R.string.home_widget_open, name)
+    carClickable(CardShape, label, onLongClick = hold, onKeyHold = open ?: hold, onDoubleClick = open) { if (!main) onPromote() }
+        .then(
+            if (open == null) Modifier
+            else Modifier.semantics { customActions = listOf(CustomAccessibilityAction(openLabel) { open(); true }) },
+        )
 }
 
 /**
@@ -227,7 +332,7 @@ private fun Widget(slot: Int, pages: List<WidgetChoice>, modifier: Modifier) {
  * forward by itself, and the widget that was there comes back when it ends. The page stays as it was left.
  */
 @Composable
-private fun WidgetStack(slot: Int, pages: List<WidgetChoice>, settings: LauncherSettings) {
+private fun WidgetStack(slot: Int, pages: List<WidgetChoice>, settings: LauncherSettings, main: Boolean, onPromote: () -> Unit, hold: () -> Unit) {
     val pager = rememberPagerState(initialPage = StackMemory.page(slot, pages)) { pages.size }
     val scope = rememberCoroutineScope()
     LaunchedEffect(pager.settledPage) { pages.getOrNull(pager.settledPage)?.let { StackMemory.shown[slot] = it } }
@@ -252,7 +357,9 @@ private fun WidgetStack(slot: Int, pages: List<WidgetChoice>, settings: Launcher
     // The dots under the card, in a strip of their own: over it they would cover a widget's own corners
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // The card and the dots are two zones: a nudge down from the card lands on the dots, one more goes on below
-        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth().carZone(), pageSpacing = HomeGap, key = { pages[it].encode() }) { page ->
+        // The card as one control is the page on screen: a double tap opens that one's page
+        val card = Modifier.carZone().widgetCard(pages[pager.currentPage.coerceIn(0, pages.size - 1)], main, onPromote, hold)
+        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth().then(card), pageSpacing = HomeGap, key = { pages[it].encode() }) { page ->
             HomeWidget(pages[page], settings, Modifier.fillMaxSize())
         }
         val next = (pager.currentPage + 1) % pages.size
@@ -279,14 +386,14 @@ private fun PageDots(count: Int, current: Int, label: String, nextText: String, 
         modifier
             .onFocusChanged { focused = it.hasFocus }
             .carClickable(shape, label, onClick = onNext)
-            .background(colors.surface2, shape)
+            .glass(shape) { it.surface2 }
             .animateContentSize()
             .padding(horizontal = 18.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(count) { i ->
-            Box(Modifier.size(10.dp).background(if (i == current) colors.text else colors.text2.copy(alpha = 0.4f), CircleShape))
+            Box(Modifier.size(10.dp).background(if (i == current) colors.accent else colors.text2.copy(alpha = 0.4f), CircleShape))
         }
         if (focused) CarLabel(nextText, 17.sp, colors.text, weight = FontWeight.Bold, maxLines = 1)
     }
@@ -301,4 +408,18 @@ private object StackMemory {
     val guiding = HashMap<Int, Boolean>()
 
     fun page(slot: Int, pages: List<WidgetChoice>): Int = pages.indexOf(shown[slot]).coerceAtLeast(0)
+
+    /** Places [a] and [b] swapped what they hold (a widget made main): what each remembers goes with it. */
+    fun swap(a: Int, b: Int) {
+        swapIn(shown, a, b)
+        swapIn(beforeNavigation, a, b)
+        swapIn(guiding, a, b)
+    }
+
+    private fun <V> swapIn(map: HashMap<Int, V>, a: Int, b: Int) {
+        val atA = map.remove(a)
+        val atB = map.remove(b)
+        if (atB != null) map[a] = atB
+        if (atA != null) map[b] = atA
+    }
 }

@@ -20,6 +20,10 @@
     <string name="problem_dropped_text">The head unit closed the connection while it was starting, without saying why. Unplug the cable and plug it back in; if it keeps happening, the head unit may not accept BetterAuto.</string>
     <string name="problem_usb_title">Couldn\'t open the USB connection</string>
     <string name="problem_usb_text">Android didn\'t let BetterAuto open the connection the car offered. Unplug the cable and plug it back in.</string>
+    <string name="problem_wifi_off_title">The phone\'s WiFi is off</string>
+    <string name="problem_wifi_off_text">Wireless Android Auto travels over the car\'s WiFi: switch the phone\'s WiFi on (it doesn\'t need to be connected to any network) and connect again. Tap to open the WiFi switch.</string>
+    <string name="problem_wifi_approval_title">Pair the car\'s WiFi once</string>
+    <string name="problem_wifi_approval_text">Android didn\'t let BetterAuto join the car\'s WiFi: its question to connect was cancelled or left unanswered, or it refused outright. Tap to pair the car\'s WiFi once in BetterAuto: from then on Android joins it without asking.</string>
     <string name="problem_phone_certificate_title">BetterAuto has no usable certificate</string>
     <string name="problem_phone_certificate_text">Among the app\'s certificate files there is no private key with its matching certificate, so the connection can\'t start. The app log says what is missing.</string>
     <string name="problem_shizuku_stopped_title">Shizuku stopped</string>
@@ -77,6 +81,11 @@
     <string name="nav_stop">End navigation</string>
     <string name="nav_search_on_phone">Search on the phone</string>
     <string name="nav_search_on_phone_desc">A notification on the phone opens the search</string>
+    <string name="nav_search_car">Search</string>
+    <string name="nav_search_car_desc">Type a place or an address</string>
+    <string name="nav_key_space">Space</string>
+    <string name="nav_key_delete">Delete</string>
+    <string name="nav_key_layout">Keyboard language</string>
     <string name="nav_send_to_car">Send to car</string>
     <string name="nav_sent_to_car">Sent to the car: %s</string>
     <string name="nav_sent_later">%s: the navigation starts when you connect to the car</string>
@@ -120,6 +129,13 @@
     <string name="nav_voice">Voice guidance</string>
     <string name="nav_spoken_stop_now">You are arriving at your stop, %1$s</string>
     <string name="nav_spoken_stop_soon">your stop, %1$s</string>
+    <string name="nav_spoken_destination_now">You are arriving at your destination, %1$s</string>
+    <string name="nav_spoken_destination_soon">your destination, %1$s</string>
+    <string name="nav_other_routes">Other routes</string>
+    <string name="nav_route_slower">+%1$d min</string>
+    <string name="nav_route_same">About the same time</string>
+    <string name="nav_route_keep">Keep: %1$s</string>
+    <string name="nav_spoken_faster">A faster route with less traffic: %1$d minutes saved</string>
     <string name="nav_spoken_stop_reached">Stop reached. Then on to %1$s.</string>
     <string name="nav_calculating">Calculating the route…</string>
     <string name="nav_no_route">No route found to %1$s</string>
@@ -148,7 +164,7 @@
     <string name="voice_stop_already">%1$s is already in the trip</string>
     <string name="map_attribution" translatable="false">© OpenFreeMap © OpenMapTiles © OpenStreetMap © Overture Maps</string>
     <string name="map_attribution_route" translatable="false">© OpenFreeMap © OpenMapTiles © OpenStreetMap © Overture Maps · Valhalla</string>
-    <string name="nav_search_attribution" translatable="false">Photon · © OpenStreetMap</string>
+    <string name="nav_search_attribution" translatable="false">Google · Photon · © OpenStreetMap</string>
     <string name="licences_title">Open source licences</string>
     <string name="licences_intro">BetterAuto is free software under the GNU GPL version 3, built with the open source parts below and showing open data. Tap one to read its licence or see its page.</string>
     <string name="licences_source">BetterAuto source code</string>
@@ -162,6 +178,8 @@
     <string name="licences_kotlin">The language the app is written in, and its background work</string>
     <string name="licences_okhttp">Internet connections: Home Assistant, map data, routes, search</string>
     <string name="licences_shizuku">Moves the sound to the car when Shizuku is there</string>
+    <string name="licences_vosk">Hears the «hi batata» wake phrase, offline, with its small English model</string>
+    <string name="licences_jna">Lets Vosk\'s speech recognizer run on the phone</string>
     <string name="licences_osm">The map\'s roads and places, road names, speed limits: © OpenStreetMap contributors</string>
     <string name="licences_openfreemap">The map\'s vector tiles</string>
     <string name="licences_overture">Road names, numbers and speed limits under the car</string>
@@ -181,6 +199,9 @@
     <string name="settings_bar_apps">Apps in the bar</string>
     <string name="settings_option">%1$s: %2$s</string>
     <string name="option_auto">Auto</string>
+    <string name="option_language_english" translatable="false">English</string>
+    <string name="option_language_arabic" translatable="false">العربية (مصر)</string>
+    <string name="option_language_italian" translatable="false">Italiano</string>
     <string name="option_day">Day</string>
     <string name="option_night">Night</string>
     <string name="option_left">Left</string>
@@ -198,6 +219,9 @@
     <string name="music_tab_queue">Up next</string>
     <string name="music_tab_library">Library</string>
     <string name="music_tab_apps">Sources</string>
+    <string name="music_tab_lyrics">Lyrics</string>
+    <string name="music_lyrics_loading">Looking for the lyrics…</string>
+    <string name="music_no_lyrics">No lyrics found for this song</string>
     <string name="music_queue_empty">This app doesn\'t share its queue</string>
     <string name="music_library_unavailable">%1$s doesn\'t share its library with other apps</string>
     <string name="music_loading">Loading…</string>
@@ -205,7 +229,12 @@
     <string name="music_back">Back</string>
     <string name="music_pick_app">Pick a music app in Sources</string>
     <string name="music_fullscreen">Full-screen player</string>
-    <string name="music_show_panel">Show library</string>
+    <string name="music_show_panel">Music home</string>
+    <string name="music_tab_home">Home</string>
+    <string name="music_recently_played">Recently played</string>
+    <string name="music_now_playing">Playing now</string>
+    <string name="music_more">See all</string>
+    <string name="music_open_player">Open the player</string>
     <string name="home_subtitle">Your car screen, your way</string>
     <string name="home_connected">Connected</string>
     <string name="home_not_connected">Not connected</string>
@@ -217,7 +246,7 @@
     <string name="setup_count">%1$d/%2$d</string>
     <string name="wireless_title">Wireless</string>
     <string name="wireless_card">Connect to the car without a cable, through a wireless dongle or a wireless head unit</string>
-    <string name="wireless_hint">Pair the dongle or the head unit with this phone in its Bluetooth settings first. BetterAuto then talks to it over Bluetooth, joins its WiFi (Android asks you once) and starts the session. The cable keeps working as before and wins when plugged in. Turn the official Android Auto off, or it competes for the same connection.</string>
+    <string name="wireless_hint">Pair the dongle or the head unit with this phone in its Bluetooth settings first. BetterAuto then talks to it over Bluetooth, joins its WiFi (Android asks you, until you pair the car\'s WiFi below) and starts the session. The cable keeps working as before and wins when plugged in. Turn the official Android Auto off, or it competes for the same connection.</string>
     <string name="wireless_permissions">To connect wirelessly BetterAuto needs Bluetooth, nearby WiFi devices and the local network.</string>
     <string name="wireless_pick">Paired devices</string>
     <string name="wireless_none_paired">No paired Bluetooth devices: pair the dongle or the head unit in the phone\'s Bluetooth settings.</string>
@@ -232,6 +261,13 @@
     <string name="wireless_dual_title">Dual WiFi</string>
     <string name="wireless_dual_hint">While connected to the car, the phone also stays on your own WiFi instead of leaving it.</string>
     <string name="wireless_dual_needs_shizuku">Needs Shizuku</string>
+    <string name="wireless_pair_title">The car\'s WiFi</string>
+    <string name="wireless_pair_hint">Pair it once and Android joins it without asking every time. Do it in the car, with the head unit on and the phone\'s WiFi on. If the car\'s WiFi is saved in the phone\'s WiFi settings, forget it there: the phone would join it by itself, find no internet and drop it.</string>
+    <string name="wireless_pair_unknown">Connect wirelessly once first: the head unit tells BetterAuto its WiFi over Bluetooth.</string>
+    <string name="wireless_pair_done">Paired: %1$s</string>
+    <string name="wireless_pair_not_yet">Not paired yet: %1$s</string>
+    <string name="wireless_pair_action">Pair the car\'s WiFi</string>
+    <string name="wireless_pair_remove">Unpair</string>
     <string name="wireless_show_all">Show all paired devices (%1$d more)</string>
     <string name="wireless_step_bluetooth">Connecting over Bluetooth…</string>
     <string name="wireless_step_wifi_details">Getting the WiFi details…</string>
@@ -498,8 +534,9 @@
     <string name="voice_start">Voice command</string>
     <string name="voice_stop">Stop the voice command</string>
     <string name="voice_which">Which one?</string>
-    <string name="voice_unavailable">This phone has no offline speech recognition for voice commands</string>
+    <string name="voice_unavailable">This phone has no speech recognition: install Speech Services by Google</string>
     <string name="voice_model_missing">The phone is downloading the speech model for this language: try again in a few minutes</string>
+    <string name="voice_language_missing">The phone\'s speech recognition doesn\'t know this language: pick English under Voice</string>
     <string name="voice_nothing_heard">I didn\'t hear anything</string>
     <string name="voice_not_understood">I didn\'t get “%1$s”</string>
     <string name="voice_calling">Calling %1$s, %2$s</string>
@@ -515,10 +552,16 @@
     <string name="voice_quiet_off">Quiet mode off</string>
     <string name="voice_no_notifications">No new messages</string>
     <string name="step_voice_title">Voice commands</string>
-    <string name="step_voice_ready">Ready: the phone\'s own offline speech recognition, with the car\'s microphone.</string>
-    <string name="step_voice_missing">This phone has no offline speech recognition: voice commands are not available.</string>
+    <string name="step_voice_ready">Ready: the phone\'s speech recognition (offline when it has it), with the car\'s microphone.</string>
+    <string name="step_voice_missing">This phone has no speech recognition: install Speech Services by Google for voice commands.</string>
     <string name="voice_listening">Listening…</string>
     <string name="settings_voice_microphone">Microphone</string>
+    <string name="settings_spoken_voice">Voice</string>
+    <string name="settings_spoken_voice_desc">Who speaks the directions and the replies: a natural recorded voice (Egyptian Arabic and English, offline; Autonoe speaks Arabic only, Soraya speaks for her in English), or the phone\'s own voice. Names are always said by the phone\'s voice.</string>
+    <string name="option_voice_autonoe" translatable="false">Autonoe</string>
+    <string name="option_voice_soraya" translatable="false">Soraya</string>
+    <string name="option_voice_nadine" translatable="false">Nadine</string>
+    <string name="option_voice_phone">Phone</string>
     <string name="option_mic_phone">Phone</string>
     <string name="voice_did_you_mean">Did you mean…?</string>
     <string name="voice_call_cancel">Cancel</string>
@@ -559,6 +602,17 @@
     <string name="widget_calendar">Calendar</string>
     <string name="widget_favorites">Favorites</string>
     <string name="widget_weather">Weather</string>
+    <string name="widget_radio">Radio</string>
+    <string name="radio_count">%1$d stations</string>
+    <string name="radio_loading">Loading Egypt\'s radio stations…</string>
+    <string name="radio_no_list">No stations yet: the list needs the internet once</string>
+    <string name="radio_connecting">Tuning in…</string>
+    <string name="radio_live">Live</string>
+    <string name="radio_failed">This station isn\'t answering: try another</string>
+    <string name="radio_previous">Previous station</string>
+    <string name="radio_next">Next station</string>
+    <string name="radio_stop">Stop the radio</string>
+    <string name="radio_stations">Stations</string>
     <string name="calendar_no_access">Allow calendar access in the BetterAuto app on the phone</string>
     <string name="calendar_empty">Nothing else today or tomorrow</string>
     <string name="calendar_today">Today</string>
@@ -769,9 +823,14 @@
     <string name="home_stack_first">Shown first</string>
     <string name="home_stack_next">Next widget: %1$s</string>
     <string name="home_stack_more">+%1$d</string>
+    <string name="home_widget_card">%1$s: tap to make it the main widget, tap twice to open it</string>
+    <string name="home_widget_card_no_page">%1$s: tap to make it the main widget</string>
+    <string name="home_widget_card_main">%1$s, the main widget: tap twice to open it</string>
+    <string name="home_widget_card_main_no_page">%1$s, the main widget</string>
+    <string name="home_widget_open">Open %1$s</string>
     <string name="settings_widget_calendars_desc">Which of the phone\'s calendars the calendar widget shows. New calendars show up by themselves.</string>
     <string name="settings_weather_car_desc">Which weather app and which place: chosen in the BetterAuto app on the phone.</string>
-    <string name="settings_theme_desc">Day or night colors. Auto follows the car\'s headlights signal, or the phone when the car doesn\'t send it.</string>
+    <string name="settings_theme_desc">Day or night look: white glass and a light map by day, dark glass and a dark map by night. Auto follows the car\'s headlights signal, or the phone when the car doesn\'t send it.</string>
     <string name="settings_app_bar_desc">Where the bar with the sections goes. Auto: on the driver\'s side on wide screens, at the bottom on narrow ones.</string>
     <string name="option_bar_side">Driver\'s side</string>
     <string name="option_right">Right</string>
@@ -834,4 +893,204 @@
     <string name="notif_way_in_bell">The bell is the last way to your notifications: first put the Notifications button back in the bar.</string>
     <string name="notif_way_in_button">This button is the last way to your notifications: first show the bell in the top bar (Settings › Display).</string>
     <string name="smarthome_arrival_more">More options (from %1$s)</string>
+    <string name="voice_ac_on">Air conditioning on.</string>
+    <string name="voice_ac_off">Air conditioning off.</string>
+    <string name="voice_ac_auto">Climate set to auto.</string>
+    <string name="voice_ac_temp">Temperature set to %1$s°</string>
+    <string name="voice_ac_temp_plain">Temperature set.</string>
+    <string name="voice_fan_up">Fan up.</string>
+    <string name="voice_fan_down">Fan down.</string>
+    <string name="voice_volume_up">Volume up.</string>
+    <string name="voice_volume_down">Volume down.</string>
+    <string name="voice_mute">Muted.</string>
+    <string name="voice_unmute">Sound back on.</string>
+    <string name="voice_tires_ok">All tyres look fine.\n%1$s</string>
+    <string name="voice_tires_check">A tyre needs a look:\n%1$s</string>
+    <string name="voice_tire_fl">Front left</string>
+    <string name="voice_tire_fr">Front right</string>
+    <string name="voice_tire_rl">Rear left</string>
+    <string name="voice_tire_rr">Rear right</string>
+    <string name="voice_trips">Here are your latest trips:\n%1$s</string>
+    <string name="voice_no_trips">No trips yet</string>
+    <string name="voice_car_unreachable">I can\'t reach the car right now.</string>
+    <string name="voice_car_refused">The car didn\'t accept that</string>
+    <string name="settings_wake_phrase">Wake phrase «hi batata»</string>
+    <string name="settings_wake_phrase_desc">Say «hi batata» to start the voice assistant without touching anything. While a car screen is up the phone\'s microphone listens, on the phone only (nothing is sent), and lets go during calls and while the assistant listens.</string>
+    <string name="settings_wake_sensitivity">Wake phrase sensitivity</string>
+    <string name="settings_wake_sensitivity_desc">Normal wants the whole phrase. Eager also wakes on a clipped one («hi tata»): fewer misses, but more false wakes from talk and radio. Strict only on a clean one.</string>
+    <string name="option_wake_strict">Strict</string>
+    <string name="option_wake_normal">Normal</string>
+    <string name="option_wake_eager">Eager</string>
+
+    <!-- The online voice assistant (Gemini and Claude) -->
+    <string name="settings_voice_brain">Voice assistant brain</string>
+    <string name="settings_voice_brain_desc">Auto: clear commands are understood on the phone at once; questions and anything else go online (Gemini and Claude) when this build has their keys and the phone has internet; what the phone understands itself is not sent. Online: always online when it can be. Offline: only the phone.</string>
+    <string name="option_brain_online">Online</string>
+    <string name="option_brain_offline">Offline</string>
+    <string name="settings_claude_model">Claude model</string>
+    <string name="settings_claude_model_desc">The Claude that understands online commands and answers questions: Haiku is the fastest, Sonnet understands loose phrasing better, Opus is the most capable and the slowest.</string>
+    <string name="option_claude_haiku">Haiku 5.5 (fastest)</string>
+    <string name="option_claude_sonnet" translatable="false">Sonnet 5.5</string>
+    <string name="option_claude_opus" translatable="false">Opus 5.5</string>
+    <string name="settings_stt_model">Online speech recognition</string>
+    <string name="settings_stt_model_desc">The Gemini model that writes down what you said online: Flash-Lite is faster, Flash may catch Egyptian Arabic better.</string>
+    <string name="option_stt_flash_lite" translatable="false">Gemini 3.5 Flash-Lite</string>
+    <string name="option_stt_flash" translatable="false">Gemini 2.5 Flash</string>
+    <string name="settings_gemini_voice_female">Answer voice: female</string>
+    <string name="settings_gemini_voice_female_desc">The Gemini voice that speaks the online assistant\'s own answers (fixed replies keep the recorded voice). Pick one here or among the male voices.</string>
+    <string name="settings_gemini_voice_male">Answer voice: male</string>
+    <string name="settings_gemini_voice_male_desc">The Gemini voice that speaks the online assistant\'s own answers (fixed replies keep the recorded voice). Pick one here or among the female voices.</string>
+    <string name="gemini_voice_zephyr" translatable="false">Zephyr</string>
+    <string name="gemini_voice_kore" translatable="false">Kore</string>
+    <string name="gemini_voice_leda" translatable="false">Leda</string>
+    <string name="gemini_voice_aoede" translatable="false">Aoede</string>
+    <string name="gemini_voice_callirrhoe" translatable="false">Callirrhoe</string>
+    <string name="gemini_voice_autonoe" translatable="false">Autonoe</string>
+    <string name="gemini_voice_despina" translatable="false">Despina</string>
+    <string name="gemini_voice_erinome" translatable="false">Erinome</string>
+    <string name="gemini_voice_laomedeia" translatable="false">Laomedeia</string>
+    <string name="gemini_voice_achernar" translatable="false">Achernar</string>
+    <string name="gemini_voice_gacrux" translatable="false">Gacrux</string>
+    <string name="gemini_voice_pulcherrima" translatable="false">Pulcherrima</string>
+    <string name="gemini_voice_vindemiatrix" translatable="false">Vindemiatrix</string>
+    <string name="gemini_voice_sulafat" translatable="false">Sulafat</string>
+    <string name="gemini_voice_puck" translatable="false">Puck</string>
+    <string name="gemini_voice_charon" translatable="false">Charon</string>
+    <string name="gemini_voice_fenrir" translatable="false">Fenrir</string>
+    <string name="gemini_voice_orus" translatable="false">Orus</string>
+    <string name="gemini_voice_enceladus" translatable="false">Enceladus</string>
+    <string name="gemini_voice_iapetus" translatable="false">Iapetus</string>
+    <string name="gemini_voice_umbriel" translatable="false">Umbriel</string>
+    <string name="gemini_voice_algieba" translatable="false">Algieba</string>
+    <string name="gemini_voice_algenib" translatable="false">Algenib</string>
+    <string name="gemini_voice_rasalgethi" translatable="false">Rasalgethi</string>
+    <string name="gemini_voice_alnilam" translatable="false">Alnilam</string>
+    <string name="gemini_voice_schedar" translatable="false">Schedar</string>
+    <string name="gemini_voice_achird" translatable="false">Achird</string>
+    <string name="gemini_voice_zubenelgenubi" translatable="false">Zubenelgenubi</string>
+    <string name="gemini_voice_sadachbia" translatable="false">Sadachbia</string>
+    <string name="gemini_voice_sadaltager" translatable="false">Sadaltager</string>
+    <string name="voice_thinking">Thinking…</string>
+    <string name="settings_driver_name">Your name</string>
+    <string name="settings_driver_name_desc">Your name and nicknames, so the assistant greets you and answers you personally (online answers and greetings). Kept on this phone only; leave empty for no name.</string>
+    <string name="settings_driver_name_car_desc">Your name and nicknames for a personal assistant: set them in the BetterAuto app on the phone, under Voice.</string>
+    <string name="driver_name_label">Name</string>
+    <string name="driver_name_hint">e.g. Sam</string>
+    <string name="driver_nicknames_label">Nicknames (comma separated)</string>
+    <string name="driver_nicknames_hint">e.g. Sammy, Sam the Man</string>
+    <string name="driver_name_save">Save</string>
+    <string name="driver_name_saved">Saved</string>
+    <string name="driver_name_set">Set</string>
+    <string name="driver_name_not_set">Not set</string>
+    <!-- Prayer times and Azan -->
+    <string name="widget_prayer">Prayer times</string>
+    <string name="prayer_fajr">Fajr</string>
+    <string name="prayer_sunrise">Sunrise</string>
+    <string name="prayer_dhuhr">Dhuhr</string>
+    <string name="prayer_asr">Asr</string>
+    <string name="prayer_maghrib">Maghrib</string>
+    <string name="prayer_isha">Isha</string>
+    <string name="prayer_in_hm">in %1$d h %2$d min</string>
+    <string name="prayer_in_m">in %1$d min</string>
+    <string name="prayer_now">now</string>
+    <string name="prayer_for_city">%1$s (no location)</string>
+    <string name="azan_spoken">It\'s time for the %1$s prayer</string>
+    <string name="city_cairo">Cairo</string>
+    <string name="city_alexandria">Alexandria</string>
+    <string name="city_mecca">Mecca</string>
+    <string name="city_medina">Medina</string>
+    <string name="city_riyadh">Riyadh</string>
+    <string name="city_dubai">Dubai</string>
+    <string name="city_rome">Rome</string>
+    <string name="city_milan">Milan</string>
+    <string name="settings_prayer_method">Prayer times method</string>
+    <string name="settings_prayer_method_desc">How Fajr and Isha are calculated, for the prayer times widget and the Azan. Egyptian: the Egyptian General Authority of Survey (Fajr 19.5°, Isha 17.5°).</string>
+    <string name="option_prayer_egyptian">Egyptian</string>
+    <string name="option_prayer_umm_al_qura">Umm al-Qura</string>
+    <string name="option_prayer_mwl">Muslim World League</string>
+    <string name="option_prayer_isna">North America (ISNA)</string>
+    <string name="option_prayer_karachi">Karachi</string>
+    <string name="settings_asr">Asr</string>
+    <string name="settings_asr_desc">Shafi\'i (also Maliki and Hanbali): when a shadow is as long as the object; Hanafi: twice as long, later in the afternoon.</string>
+    <string name="option_asr_shafii">Shafi\'i</string>
+    <string name="option_asr_hanafi">Hanafi</string>
+    <string name="settings_prayer_city">City when there is no location</string>
+    <string name="settings_prayer_city_desc">Prayer times follow the car\'s position, else the phone\'s last known one; with neither, they are for this city.</string>
+    <string name="settings_azan">Azan</string>
+    <string name="settings_azan_desc">At prayer time, while connected to the car: a short chime and a spoken notice (“It\'s time for the Dhuhr prayer”), the music paused meanwhile. Chime: the chime alone.</string>
+    <string name="option_azan_spoken">Chime and voice</string>
+    <string name="option_azan_chime">Chime</string>
+    <!-- Driving assistant (assist/): spoken lines, in the voice language -->
+    <string name="assist_brief_morning">Good morning</string>
+    <string name="assist_brief_morning_named">Good morning, %1$s</string>
+    <string name="assist_brief_evening">Good evening</string>
+    <string name="assist_brief_evening_named">Good evening, %1$s</string>
+    <string name="assist_brief_night">Hi there, driving late</string>
+    <string name="assist_brief_night_named">Hi %1$s, driving late</string>
+    <string name="assist_brief_temperature">it\'s %1$d degrees outside</string>
+    <string name="assist_brief_event">your next appointment is at %1$s</string>
+    <string name="assist_brief_eta_work">it\'s %1$d minutes to work</string>
+    <string name="assist_brief_eta_home">it\'s %1$d minutes home</string>
+    <string name="assist_brief_eta_place">it\'s %2$d minutes to %1$s</string>
+    <string name="assist_rest_first">You\'ve been driving for two hours. How about a short break and a coffee?</string>
+    <string name="assist_rest_again">Still no break: a few minutes\' rest would do you good.</string>
+    <string name="assist_fuel_station">Fuel\'s running low. The nearest station is %1$s away: shall I take you there?</string>
+    <string name="assist_fuel_low">Fuel\'s running low: time to look for a station.</string>
+    <string name="assist_fuel_declined">Okay, as you like.</string>
+    <string name="assist_fuel_hint">To the station? Say yes or no</string>
+    <string name="assist_km">%1$s kilometres</string>
+    <string name="assist_metres">%1$d metres</string>
+    <string name="assist_miles">%1$s miles</string>
+    <!-- Driving assistant: settings and the parked car on the phone -->
+    <string name="settings_assist_brief">Arrival brief</string>
+    <string name="settings_assist_brief_desc">At the start of a drive (not when the car reconnects within 10 minutes), a few spoken words: a greeting, the temperature outside as the car says it, your next appointment today and, when you usually drive to work or home at this time, how long the road takes.</string>
+    <string name="settings_assist_rest">Rest reminder</string>
+    <string name="settings_assist_rest_desc">After two hours of driving, a gentle spoken reminder to take a break, then again every 45 minutes. A stop of 15 minutes starts the count again.</string>
+    <string name="settings_assist_speed">Speed warning</string>
+    <string name="settings_assist_speed_desc">A soft chime when you drive more than 5 km/h over the road\'s limit for a few seconds, at most once a minute; the limit sign pulses meanwhile. Only where the map data states the limit.</string>
+    <string name="settings_assist_fuel">Low fuel help</string>
+    <string name="settings_assist_fuel_desc">When the fuel runs low, the nearest station and how far it is; press the voice button and say “yes” to add it as a stop. Only with cars that share their fuel level or range.</string>
+    <string name="settings_assist_fuel_reserve">Low fuel at</string>
+    <string name="settings_assist_fuel_reserve_desc">How low the tank, or the range left, may go before a station is offered.</string>
+    <string name="option_fuel_reserve_low" formatted="false">10% · 40 km</string>
+    <string name="option_fuel_reserve_normal" formatted="false">15% · 60 km</string>
+    <string name="option_fuel_reserve_high" formatted="false">25% · 100 km</string>
+    <string name="settings_assist_parked">Where\'s my car</string>
+    <string name="settings_assist_parked_desc">At the end of a drive, where the car was left is kept on this phone only (never sent anywhere) and shown in the BetterAuto app, with walking directions.</string>
+    <string name="settings_assist_parked_notify">Parked car notification</string>
+    <string name="settings_assist_parked_notify_desc">When the car disconnects, a quiet notification on the phone saying where the car is parked; a tap gives walking directions.</string>
+    <string name="assist_parked_channel">Parked car</string>
+    <string name="assist_parked_title">Your car is parked</string>
+    <string name="assist_parked_notify_road">On %1$s, since %2$s. Tap to walk there.</string>
+    <string name="assist_parked_notify_time">Since %1$s. Tap to walk there.</string>
+    <string name="assist_parked_card_title">Where\'s my car?</string>
+    <string name="assist_parked_card_road">On %1$s, since %2$s</string>
+    <string name="assist_parked_card_time">Parked since %1$s</string>
+    <string name="assist_parked_card_none">After a drive, where the car was left shows here.</string>
+    <string name="assist_parked_walk">Navigate on foot</string>
+    <string name="assist_parked_forget">Forget</string>
+    <!-- Messages read aloud, voice replies, callers announced -->
+    <string name="voice_message_from">Message from %1$s</string>
+    <string name="voice_message_in_group">%1$s in %2$s</string>
+    <string name="voice_message_code">A code from %1$s</string>
+    <string name="voice_reply_ask">Reply? Say your message</string>
+    <string name="voice_reply_ask_to">What should I reply to %1$s?</string>
+    <string name="voice_reply_hint">Reply to %1$s: say it, or \"cancel\"</string>
+    <string name="voice_reply_sent">Sent</string>
+    <string name="voice_reply_sent_to">Sent to %1$s</string>
+    <string name="voice_reply_cancelled">OK, not sent</string>
+    <string name="voice_reply_failed">The reply could not be sent</string>
+    <string name="voice_reply_no_message">No message from %1$s to reply to</string>
+    <string name="voice_reply_none">No message to reply to</string>
+    <string name="voice_call_incoming">%1$s is calling. Answer?</string>
+    <string name="voice_call_unknown">An unknown number is calling. Answer?</string>
+    <string name="voice_call_hint">Say \"answer\" or \"decline\"</string>
+    <string name="settings_read_messages">Read messages aloud</string>
+    <string name="settings_read_messages_desc">New messages are said in the car: only who wrote, or read with a voice reply after (\"Reply? Say your message\"; \"no\" sends nothing). Never during a call or a navigation prompt; codes are only announced.</string>
+    <string name="option_read_announce">Announce only</string>
+    <string name="option_read_reply">Read and reply</string>
+    <string name="settings_read_messages_apps">Apps read aloud</string>
+    <string name="settings_read_messages_apps_desc">Whose messages are read aloud: WhatsApp, Telegram and SMS until you pick.</string>
+    <string name="settings_announce_calls">Announce callers</string>
+    <string name="settings_announce_calls_desc">An incoming call is said by name (\"Mario is calling. Answer?\"); say \"answer\" or \"decline\" within a few seconds.</string>
 </resources>

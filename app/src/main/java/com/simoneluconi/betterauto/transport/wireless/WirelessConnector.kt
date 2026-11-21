@@ -64,7 +64,15 @@ class WirelessConnector(private val context: Context) : Closeable {
         if (!cancelled) report(WirelessState.Connecting(next))
     }
 
-    fun connect(address: String): Transport {
+    fun connect(address: String): Transport = try {
+        open(address)
+    } catch (e: Exception) {
+        // Nothing of a failed attempt stays open: a Bluetooth link left behind keeps the head unit busy
+        close()
+        throw e
+    }
+
+    private fun open(address: String): Transport {
         enter(WirelessStep.BLUETOOTH)
         missingPermissions(context).takeIf { it.isNotEmpty() }?.let {
             throw IOException("missing permissions: ${it.joinToString { p -> p.substringAfterLast('.') }}")
@@ -81,6 +89,8 @@ class WirelessConnector(private val context: Context) : Closeable {
         enter(WirelessStep.WIFI_DETAILS)
         val bootstrap = WirelessBootstrap(socket.inputStream, socket.outputStream)
         val endpoint = withTimeout(BOOTSTRAP_TIMEOUT_MS, "WiFi details from $name") { bootstrap.negotiate() }
+        // The access point to pair from the phone app, so that Android stops asking
+        WifiPairing.remember(context, endpoint)
         check()
 
         enter(WirelessStep.WIFI_JOIN)
@@ -90,7 +100,7 @@ class WirelessConnector(private val context: Context) : Closeable {
         val join = WifiJoin(context)
         wifi = join
         val network = try {
-            join.join(endpoint, WIFI_TIMEOUT_MS)
+            join.join(endpoint)
         } catch (e: IOException) {
             runCatching { bootstrap.reportConnection(Status.STATUS_WIFI_NETWORK_UNAVAILABLE) }
             throw e
@@ -99,6 +109,7 @@ class WirelessConnector(private val context: Context) : Closeable {
 
         enter(WirelessStep.TCP)
         EventLog.log("Wireless: TCP to ${endpoint.host}:${endpoint.port}")
+        // Bound to the head unit's network: never sent over the phone's own WiFi or mobile data
         val tcp = network.socketFactory.createSocket()
         try {
             tcp.tcpNoDelay = true
@@ -212,7 +223,6 @@ class WirelessConnector(private val context: Context) : Closeable {
         private const val BLUETOOTH_ATTEMPTS = 3
         private const val BLUETOOTH_RETRY_PAUSE_MS = 1_000L
         private const val BOOTSTRAP_TIMEOUT_MS = 15_000L
-        private const val WIFI_TIMEOUT_MS = 30_000L
         private const val TCP_TIMEOUT_MS = 10_000
 
         private val _status = MutableStateFlow<WirelessState>(WirelessState.Idle)
@@ -224,6 +234,7 @@ class WirelessConnector(private val context: Context) : Closeable {
         }
 
         private const val KEY_DEVICE = "device"
+        private const val KEY_AUTO_HELD_UNTIL = "auto_held_until"
         private const val KEY_DUAL_WIFI = "dual_wifi"
 
         /** Stay on the phone's own WiFi while on the head unit's: set through Shizuku before each join. */
@@ -246,6 +257,13 @@ class WirelessConnector(private val context: Context) : Closeable {
 
         /** Android 17's local network permission (a string, so it builds against any SDK). */
         const val ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+
+        /** Automatic connections are held until then (wall clock), after Android refused the car's WiFi. */
+        fun autoHeldUntil(context: Context): Long = context.wirelessPrefs().getLong(KEY_AUTO_HELD_UNTIL, 0)
+
+        fun holdAuto(context: Context, untilMs: Long?) {
+            context.wirelessPrefs().edit { if (untilMs == null) remove(KEY_AUTO_HELD_UNTIL) else putLong(KEY_AUTO_HELD_UNTIL, untilMs) }
+        }
 
         /** The head unit or dongle the driver picked, by Bluetooth address. */
         fun savedDevice(context: Context): String? =

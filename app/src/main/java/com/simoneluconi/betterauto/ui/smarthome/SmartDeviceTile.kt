@@ -117,7 +117,7 @@ fun SmartDeviceTile(
         DeviceKind.BUTTON, DeviceKind.SCENE, DeviceKind.SCRIPT -> DeviceAction.RUN.takeIf { it in device.actions }
         else -> null
     }
-    val background = if (lit && !device.kind.readOnly && device.kind != DeviceKind.LOCK) colors.focus.copy(alpha = 0.18f) else container
+    val background = if (lit && !device.kind.readOnly && device.kind != DeviceKind.LOCK) colors.accent.copy(alpha = 0.18f) else container
     val stateText = stateLine(device, current, feedback)
 
     val base = modifier.heightIn(min = 168.dp)
@@ -135,10 +135,10 @@ fun SmartDeviceTile(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(
-                Modifier.size(52.dp).background(if (lit) colors.focus else colors.surface2.takeIf { container != it } ?: colors.surface, CircleShape),
+                Modifier.size(52.dp).background(if (lit) colors.accent else colors.surface2.takeIf { container != it } ?: colors.surface, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                CarIcon(device.kind.icon, if (lit) Color.White else colors.text, Modifier.size(26.dp))
+                CarIcon(device.kind.icon, if (lit) colors.onAccent else colors.text, Modifier.size(26.dp))
             }
             // Room for a two-line name whatever the name: tiles side by side keep one height, buttons in one line
             Column(

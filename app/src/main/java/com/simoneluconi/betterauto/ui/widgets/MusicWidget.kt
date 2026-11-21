@@ -52,8 +52,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -78,7 +76,9 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.formatTime
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
+import com.simoneluconi.betterauto.media.RecentTracks
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.delay
 
 /**
@@ -113,11 +113,11 @@ private fun Modifier.secondaryLinks(): Modifier = composed {
 private const val NARROW_RATIO = 1.45f
 
 /** Progress bar refresh: as often as the knob moves a pixel, within these bounds. */
+/** The card's corners on the home screen. */
+private val CardShape = RoundedCornerShape(32.dp)
+
 private const val MIN_PROGRESS_STEP_MS = 50L
 private const val MAX_PROGRESS_STEP_MS = 500L
-
-/** Least contrast ratio of the progress fill against its card and its rail, for the bar to read at a glance. */
-private const val MIN_FILL_CONTRAST = 2.2f
 
 /** How long a seek is shown before the player reports it, and how close its report must be to count. */
 private const val SEEK_HOLD_MS = 1500L
@@ -133,9 +133,18 @@ private const val TALL_RATIO = 0.9f
  * Now playing card. Wide: big cover on the left, everything else in a column beside it.
  * Narrow: cover and title on top, progress and transport below, secondary actions at the bottom.
  * Tall: a big cover on top and everything else below it, for portrait screens.
+ * A card of glass on the home screen (the full player in the music section sits on the page itself), the play
+ * button and the progress in the gold accent, like everything else.
  */
 @Composable
 fun MusicWidget(modifier: Modifier = Modifier, extended: Boolean = false, onShowPanel: (() -> Unit)? = null) {
+    // The music home's "recently played" starts listening wherever the player first shows
+    LaunchedEffect(Unit) { RecentTracks.start() }
+    MusicCard(modifier, extended, onShowPanel)
+}
+
+@Composable
+private fun MusicCard(modifier: Modifier, extended: Boolean, onShowPanel: (() -> Unit)?) {
     val track by NowPlaying.track.collectAsStateWithLifecycle()
     val hasAccess by NowPlaying.hasAccess.collectAsStateWithLifecycle()
     val colors = LocalCarColors.current
@@ -144,8 +153,8 @@ fun MusicWidget(modifier: Modifier = Modifier, extended: Boolean = false, onShow
     CompositionLocalProvider(LocalPlayerLinks provides links) {
     BoxWithConstraints(
         modifier
-            .clip(RoundedCornerShape(32.dp))
-            .background(if (track != null) colors.albumCard else colors.surface)
+            .then(if (extended) Modifier else Modifier.glass(CardShape))
+            .clip(CardShape)
             .padding(28.dp)
     ) {
         val current = track
@@ -189,13 +198,22 @@ private fun WidePlayer(track: Track, width: Dp, height: Dp, extended: Boolean, o
                     maxHeight >= 90.dp -> TitleBlock(track, titleSize = 28.sp, maxLines = 1, scale = 0.75f, album = false)
                     else -> CarLabel(
                         track.title.ifBlank { stringResource(R.string.music_unknown_title) }, 22.sp, LocalCarColors.current.text,
-                        weight = FontWeight.ExtraBold, maxLines = 1,
+                        weight = FontWeight.Bold, maxLines = 1,
                     )
                 }
             }
             Progress(track)
             // Previous, play and next side by side within the column
-            Transport(track, playSize = (height * 0.25f).coerceIn(if (short) 60.dp else 104.dp, 160.dp).coerceAtMost(column / 2.8f))
+            val playSize = (height * 0.25f).coerceIn(if (short) 60.dp else 104.dp, 160.dp).coerceAtMost(column / 2.8f)
+            if (short && onShowPanel != null) {
+                // The source row is gone on a short card: its way back to the music home stays, beside the buttons
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { Transport(track, playSize) }
+                    ShowPanelButton(onShowPanel)
+                }
+            } else {
+                Transport(track, playSize)
+            }
             if (!short) track.upNext?.let { UpNext(it) }
         }
     }
@@ -264,7 +282,7 @@ private fun EmptyPlayer(hasAccess: Boolean) {
         Box(Modifier.size(96.dp).background(colors.surface2, CircleShape), contentAlignment = Alignment.Center) {
             CarIcon(CarIcons.Music, colors.text2, Modifier.size(44.dp))
         }
-        CarLabel(stringResource(R.string.music_nothing_playing), 34.sp, colors.text, weight = FontWeight.ExtraBold)
+        CarLabel(stringResource(R.string.music_nothing_playing), 34.sp, colors.text, weight = FontWeight.Bold)
         CarLabel(
             stringResource(if (hasAccess) R.string.music_start_hint else R.string.music_access_hint),
             22.sp, colors.text2, maxLines = 2, textAlign = TextAlign.Center,
@@ -275,7 +293,7 @@ private fun EmptyPlayer(hasAccess: Boolean) {
 @Composable
 private fun Cover(track: Track, size: Dp, badge: Boolean, modifier: Modifier = Modifier) {
     val colors = LocalCarColors.current
-    val shape = RoundedCornerShape(24.dp)
+    val shape = CardArtShape
     Box(modifier.size(size)) {
         val art = track.art
         if (art != null) {
@@ -336,10 +354,10 @@ private fun UpNext(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Brings back the library panel next to a full-screen player. */
+/** Back from the full-screen player to the music home. */
 @Composable
 private fun ShowPanelButton(onClick: () -> Unit) {
-    ToggleButton(CarIcons.List, stringResource(R.string.music_show_panel), active = false, onClick = onClick)
+    ToggleButton(CarIcons.Tiles, stringResource(R.string.music_show_panel), active = false, onClick = onClick)
 }
 
 /** The player's own buttons, except shuffle/repeat which our toggles already cover. */
@@ -390,7 +408,7 @@ private fun ToggleButton(icon: ImageVector, label: String, active: Boolean, onCl
         Modifier
             .secondaryLinks()
             .carClickable(CircleShape, label, onClick = onClick)
-            .background(if (active) colors.album.copy(alpha = 0.3f) else colors.text.copy(alpha = 0.08f), CircleShape)
+            .background(if (active) colors.accent.copy(alpha = 0.3f) else colors.surface2, CircleShape)
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -404,26 +422,17 @@ private fun TitleBlock(track: Track, titleSize: TextUnit, maxLines: Int, modifie
     Column(modifier) {
         CarLabel(
             track.title.ifBlank { stringResource(R.string.music_unknown_title) }, titleSize, colors.text,
-            weight = FontWeight.ExtraBold, maxLines = maxLines, lineHeight = 1.24.em,
+            weight = FontWeight.Bold, maxLines = maxLines, lineHeight = 1.24.em,
         )
+        // Plain grey lines under the title, no icons: the artist, then the album smaller
         if (track.artist.isNotBlank()) {
-            Spacer(Modifier.height(16.dp * scale))
-            InfoLine(CarIcons.Artist, track.artist, 26.sp * scale)
+            Spacer(Modifier.height(12.dp * scale))
+            CarLabel(track.artist, 26.sp * scale, colors.text2, lineHeight = 1.3.em)
         }
         if (album && track.album.isNotBlank()) {
-            Spacer(Modifier.height(8.dp * scale))
-            InfoLine(CarIcons.Album, track.album, 23.sp * scale)
+            Spacer(Modifier.height(6.dp * scale))
+            CarLabel(track.album, 22.sp * scale, colors.text2.copy(alpha = 0.8f), lineHeight = 1.3.em)
         }
-    }
-}
-
-@Composable
-private fun InfoLine(icon: ImageVector, text: String, size: TextUnit) {
-    val colors = LocalCarColors.current
-    val iconSize = with(LocalDensity.current) { size.toDp() } * 0.95f
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        CarIcon(icon, colors.text2, Modifier.size(iconSize))
-        CarLabel(text, size, colors.text2, lineHeight = 1.3.em)
     }
 }
 
@@ -487,17 +496,12 @@ private fun Progress(track: Track) {
         Modifier
     }
     val rail = colors.text.copy(alpha = 0.16f)
-    // A cover's color close to the card or to the rail (a grey cover by day, a dark one at night) would
-    // vanish: lifted toward the text until it stands out from both
-    val railOnCard = rail.compositeOver(colors.albumCard)
-    val fill = (0..10).asSequence()
-        .map { androidx.compose.ui.graphics.lerp(colors.album, colors.text, it / 10f) }
-        .firstOrNull { contrast(it, colors.albumCard) >= MIN_FILL_CONTRAST && contrast(it, railOnCard) >= MIN_FILL_CONTRAST }
-        ?: colors.text
+    val fill = colors.accent
     Column(seek.onSizeChanged { barWidthPx = it.width }) {
         Box(
             Modifier.fillMaxWidth().height(20.dp).drawBehind {
-                val barHeight = 8.dp.toPx()
+                // A thin line, as the player it follows draws it
+                val barHeight = 5.dp.toPx()
                 val top = (size.height - barHeight) / 2
                 val radius = CornerRadius(barHeight / 2)
                 drawRoundRect(rail, Offset(0f, top), Size(size.width, barHeight), radius)
@@ -505,7 +509,7 @@ private fun Progress(track: Track) {
                 val x = size.width * (position().toFloat() / track.durationMs).coerceIn(0f, 1f)
                 drawRoundRect(fill, Offset(0f, top), Size(x, barHeight), radius)
                 // Knob centred on the playback position, bigger while dragged
-                val knob = (if (dragFraction != null) 28.dp else 20.dp).toPx()
+                val knob = (if (dragFraction != null) 28.dp else 16.dp).toPx()
                 drawCircle(fill, knob / 2, Offset(x, size.height / 2))
             }
         )
@@ -516,16 +520,9 @@ private fun Progress(track: Track) {
     }
 }
 
-/** Contrast ratio of two opaque colors, 1 (same) to 21 (black on white). */
-private fun contrast(a: Color, b: Color): Float {
-    val la = a.luminance() + 0.05f
-    val lb = b.luminance() + 0.05f
-    return maxOf(la, lb) / minOf(la, lb)
-}
-
 /** A turning arc: the player was asked to play and is still loading. Animated only while shown. */
 @Composable
-private fun LoadingSpinner(color: Color, modifier: Modifier) {
+internal fun LoadingSpinner(color: Color, modifier: Modifier) {
     val turn by rememberInfiniteTransition(label = "loading").animateFloat(
         0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "loadingTurn",
     )
@@ -572,7 +569,7 @@ private fun Transport(track: Track, playSize: Dp) {
                 .carClickable(playShape, stringResource(if (track.playing) R.string.music_pause else R.string.music_play)) {
                     NowPlaying.playPause()
                 }
-                .background(colors.album, playShape)
+                .background(colors.accent, playShape)
                 .size(playSize),
             contentAlignment = Alignment.Center,
         ) {
@@ -584,8 +581,8 @@ private fun Transport(track: Track, playSize: Dp) {
                 else -> CarIcons.Play
             }
             Crossfade(icon, animationSpec = tween(180), label = "playIcon") {
-                if (it == null) LoadingSpinner(colors.onAlbum, Modifier.size(playSize * 0.42f))
-                else CarIcon(it, colors.onAlbum, Modifier.size(playSize * 0.4f))
+                if (it == null) LoadingSpinner(colors.onAccent, Modifier.size(playSize * 0.42f))
+                else CarIcon(it, colors.onAccent, Modifier.size(playSize * 0.4f))
             }
         }
         Box(

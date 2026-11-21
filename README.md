@@ -93,10 +93,11 @@ Developed and tested with a Raspberry Pi 4 running Crankshaft as the head unit:
   next connection. Routes come from Valhalla's public demonstration server while the routing source for
   everyday use is chosen.
 - 🎙️ **Voice commands** through the car's microphone, recognized offline by the phone itself:
-  calls (with a cancel window before dialing), music, sections, quiet mode, reading messages.
+  calls (with a cancel window before dialing), music, sections, quiet mode, reading messages. Or hands-free:
+  say «hi batata» (Settings > Voice > Wake phrase), heard offline on the phone's microphone.
 - 🧩 **Widget home** with up to six widgets placed as you like, in rows or columns (one big and two small,
   two rows of which one split in half...), in the car or on the phone; landscape and portrait car screens
-  each keep their own. An app bar and a top bar arranged from the settings. Widgets: music, notifications, favorite contacts (one tap calls), a big clock with the
+  each keep their own. Tap a widget to make it the big one, double tap it to open its page. An app bar and a top bar arranged from the settings. Widgets: music, notifications, favorite contacts (one tap calls), a big clock with the
   outside temperature, today's and tomorrow's events from the calendars you pick, and the weather, shown by hosting the
   phone's own weather app widget (no weather service of ours). Sensible defaults, nothing to set up
   unless a widget needs a permission, asked on the phone only when it is picked.
@@ -202,5 +203,7 @@ BetterAuto is built with:
 | [Kotlin, kotlinx.coroutines](https://kotlinlang.org) | The language and its background work | Apache-2.0 |
 | [OkHttp, Okio](https://square.github.io/okhttp/) | Internet connections | Apache-2.0 |
 | [Shizuku API](https://github.com/RikkaApps/Shizuku-API) | Moving the sound to the car | MIT |
+| [Vosk](https://alphacephei.com/vosk/) and its model `vosk-model-small-en-us-0.15` | The «hi batata» wake phrase, offline | Apache-2.0 |
+| [JNA](https://github.com/java-native-access/jna) | Running Vosk on the phone | Apache-2.0 (or LGPL-2.1) |
 
 The app shows the same list under *Open source licences*, with the full licence texts.

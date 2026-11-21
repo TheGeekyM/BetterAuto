@@ -46,8 +46,8 @@ object PhoneSettingsSections {
     val all: List<PhoneSettingsSection> = listOf(
         Section("weather", SettingsCategory.HOME_SCREEN, R.string.weather_title, R.string.settings_weather_desc, widget = WidgetType.WEATHER,
             summary = { weatherSummary() }) { WeatherPhoneSettings() },
-        Section("voice_language", SettingsCategory.VOICE, R.string.language_voice, R.string.settings_voice_language_desc,
-            summary = { voiceLanguageSummary() }) { VoiceLanguageSettings() },
+        Section("driver_name", SettingsCategory.VOICE, R.string.settings_driver_name, R.string.settings_driver_name_desc,
+            summary = { driverNameSummary() }) { DriverNameSettings() },
         Section("formats", SettingsCategory.VEHICLE, R.string.language_formats, R.string.settings_formats_desc) { FormatSettings() },
         // VW group cars only
         Section("exlap", SettingsCategory.VEHICLE, R.string.exlap_title, R.string.settings_exlap_desc, more = true,

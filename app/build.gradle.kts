@@ -7,6 +7,22 @@ plugins {
 // The one place for the version (scripts\release.ps1 reads it); the code follows it: 1.2.3 -> 10203
 val appVersion = "0.3.0"
 
+// A Google Places API key of your own, in local.properties (never in git): place search with Google's data.
+// Without one the search uses OpenStreetMap and the phone's geocoder only
+val placesKey: String = rootProject.file("local.properties").takeIf { it.exists() }?.readLines()
+    ?.firstOrNull { it.trim().startsWith("betterauto.placesKey=") }?.substringAfter('=')?.trim()
+    .orEmpty()
+
+// Keys of your own for the online voice assistant, in local.properties (never in git): Gemini (speech to text and
+// the spoken answers) and Anthropic (Claude understands the command). Without both the assistant stays offline
+val localProperties: List<String> = rootProject.file("local.properties").takeIf { it.exists() }?.readLines().orEmpty()
+fun localKey(name: String): String =
+    localProperties.firstOrNull { it.trim().startsWith("$name=") }?.substringAfter('=')?.trim().orEmpty()
+// A public release (-Pbetterauto.certs=dev) never carries them
+val publicRelease = providers.gradleProperty("betterauto.certs").orNull == "dev"
+val geminiKey = if (publicRelease) "" else localKey("betterauto.geminiKey")
+val anthropicKey = if (publicRelease) "" else localKey("betterauto.anthropicKey")
+
 // The phone's TLS identity: assets/ holds our public development pair and may hold one of your own (ignored by
 // git), and an APK must carry only one (AapTls refuses two). Yours is taken when it is there;
 // -Pbetterauto.certs=dev leaves it out (the public release), -Pbetterauto.certs=own insists on it.
@@ -35,6 +51,9 @@ android {
         versionCode = appVersion.split('.').map(String::toInt).let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
         // Phones only: MapLibre's x86 libraries, for emulators, made up a third of the APK
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        buildConfigField("String", "PLACES_KEY", "\"$placesKey\"")
+        buildConfigField("String", "GEMINI_KEY", "\"$geminiKey\"")
+        buildConfigField("String", "ANTHROPIC_KEY", "\"$anthropicKey\"")
     }
 
     androidResources {
@@ -75,6 +94,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
         // The interface between the app and its Shizuku service (audio routing as the shell user)
         aidl = true
     }
@@ -104,8 +124,14 @@ dependencies {
     implementation(libs.shizuku.provider)
     // Smart home: Home Assistant's HTTP login and WebSocket API (Apache 2.0)
     implementation(libs.okhttp)
+    // The online voice assistant: Claude through Anthropic's SDK (Apache 2.0); Gemini is plain HTTP on OkHttp
+    implementation(libs.anthropic.java)
     // The map: vector tiles drawn on the phone with our own style (BSD-2-Clause)
     implementation(libs.maplibre.android)
+    // The "hi batata" wake phrase, offline: Vosk (Apache 2.0) with its small English model in assets/vosk-model
+    // (Apache 2.0, from alphacephei.com); its Android build needs JNA's Android flavour (Apache 2.0)
+    implementation(libs.vosk.android)
+    implementation("${libs.jna.get()}@aar")
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.simoneluconi.betterauto.EventLog
+import com.simoneluconi.betterauto.radio.Radio
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.pow
@@ -32,6 +33,8 @@ object KeyScrub {
     val running: StateFlow<Int> = _running
 
     private val startScrub = Runnable {
+        // The radio is live: the release changes station
+        if (Radio.on) return@Runnable
         val track = NowPlaying.track.value ?: return@Runnable
         if (track.durationMs <= 0) return@Runnable // a stream without length: the release changes track
         scrubbing = true
@@ -68,8 +71,8 @@ object KeyScrub {
                 NowPlaying.seekTo(target)
                 EventLog.log("Input: track at ${clock(target)}")
             }
-            direction > 0 -> NowPlaying.next()
-            else -> NowPlaying.previous()
+            direction > 0 -> NowPlaying.skipNext()
+            else -> NowPlaying.skipPrevious()
         }
         direction = 0
         scrubbing = false

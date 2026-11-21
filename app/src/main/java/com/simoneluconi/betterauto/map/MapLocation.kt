@@ -2,6 +2,7 @@ package com.simoneluconi.betterauto.map
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -10,6 +11,7 @@ import android.location.LocationManager
 import android.location.LocationRequest
 import android.os.Build
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.car.CarGpsGate
@@ -26,9 +28,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -70,10 +74,16 @@ enum class MapSource {
 enum class MapLocationProblem { NONE, NO_PERMISSION, SEARCHING }
 
 /**
- * The position the map follows, only while a map is on screen ([request]). The same rule as the smart-home
- * arrival buttons ([CarGpsGate]): the car's own GPS while it is live and sees satellites, then the phone's
- * GPS stays off; otherwise the phone's, once a second. The heading is the way the car moves (the GPS
- * course), never the phone's compass.
+ * The position the map follows, while someone asks for it ([request]): the car screen for the whole session,
+ * a map on screen, the guidance. The same rule as the smart-home arrival buttons ([CarGpsGate]): the car's own
+ * GPS while it is live and sees satellites, then the phone's GPS stays off; otherwise the phone's real GPS once
+ * a second, its network location only as a fallback while the GPS is quiet. The heading is the way the car
+ * moves (the GPS course), never the phone's compass.
+ *
+ * Only a live, precise phone fix moves the car: one delivered late (a remembered or batched position) or a
+ * vague one (a network guess hundreds of metres off, in the sea by a coast road) is left out, and a phone GPS
+ * gone quiet is asked again. A position kept from before (the map closed, the last session) is shown as the
+ * last known one, not as live.
  *
  * With no GPS at all (a tunnel, a covered car park) the position goes on from the last fix as the car
  * says it moves: its speed (backwards in reverse), and for the turns its own compass or, failing that,
@@ -98,6 +108,20 @@ object MapLocation {
     private var job: Job? = null
     private var context: Context? = null
     private var phoneListener: LocationListener? = null
+    /** The network location, heard only while the phone's GPS is quiet. */
+    private var fallbackListener: LocationListener? = null
+    private var phoneProvider: String? = null
+    /** When the phone's location was last asked for, and when its [phoneProvider] last delivered (used or not). */
+    private var phoneAskedAt = 0L
+    private var lastPhoneAt = 0L
+    /** The last fix from the phone's [phoneProvider] that was used. */
+    private var lastGpsAt = 0L
+    /** Times the quiet phone GPS was asked again, since its last fix. */
+    private var reasked = 0
+    /** Why phone fixes are being left out, logged once per stretch. */
+    private var dropping: PhoneVerdict? = null
+    /** The phone's provider whose fixes move the car. */
+    private var phoneSource: String? = null
     private var lastCarAt = 0L
     /** The last fix from a GPS, the car's or the phone's (not an estimate). */
     private var lastRealAt = 0L
@@ -132,7 +156,13 @@ object MapLocation {
 
     private fun start() {
         lastCarAt = 0L
+        // A position kept from before (the map closed, the last session) is where the car was, not where it is: never
+        // moved on from, and labelled once it is old ([reckon])
         lastRealAt = 0L
+        lastPhoneAt = 0L
+        lastGpsAt = 0L
+        reasked = 0
+        dropping = null
         job = scope.launch {
             launch { followCar() }
             launch { watchPhone() }
@@ -145,6 +175,7 @@ object MapLocation {
         job = null
         stopPhone()
         source = null
+        phoneSource = null
         _problem.value = MapLocationProblem.NONE
         _lost.value = false
     }
@@ -162,16 +193,30 @@ object MapLocation {
 
     private fun carLive() = lastCarAt != 0L && SystemClock.elapsedRealtime() - lastCarAt < CarGpsGate.FRESH_MS
 
-    /** The phone's GPS on whenever the car's is quiet, off as soon as the car talks again. */
+    /**
+     * The phone's GPS on whenever the car's is quiet, off as soon as the car talks again. A request gone quiet is
+     * made again: a phone may stop delivering to an app in the background without a word.
+     */
     private suspend fun watchPhone() {
         while (true) {
-            if (carLive()) stopPhone() else startPhone()
+            if (carLive()) {
+                stopPhone()
+            } else {
+                startPhone()
+                val quietMs = SystemClock.elapsedRealtime() - maxOf(phoneAskedAt, lastPhoneAt)
+                if (phoneListener != null && quietMs > phoneSilentMs(lastPhoneAt != 0L, reasked)) {
+                    if (reasked == 0) EventLog.log("Map: no fix from the phone's ${phoneProvider ?: "location"} for ${quietMs / 1000} s, asking again (${phoneState()})")
+                    reasked++
+                    stopPhone()
+                    startPhone(again = true)
+                }
+            }
             delay(PHONE_CHECK_MS)
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun startPhone() {
+    private fun startPhone(again: Boolean = false) {
         if (phoneListener != null || phoneIgnored) return
         val context = context ?: return
         val granted = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
@@ -182,40 +227,88 @@ object MapLocation {
             return
         }
         val lm = context.getSystemService(LocationManager::class.java) ?: return
-        val provider = bestProvider(lm) ?: return
+        val provider = phoneProvider(lm) ?: return
+        phoneProvider = provider
         if (_fix.value == null) {
             _problem.value = MapLocationProblem.SEARCHING
-            // Something to show at once while the first fix comes: the newest any provider remembers
+            // Something to show at once while the first fix comes: the newest any provider remembers, only if it is as
+            // fresh as a live one (an older one put the car where it had been, maybe far away, as if it were there)
             lm.allProviders.mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
                 .maxByOrNull { it.elapsedRealtimeNanos }
-                ?.takeIf { SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos < LAST_KNOWN_MAX_AGE_MS * 1_000_000 }
-                ?.let { onPhoneLocation(it, remembered = true) }
+                ?.let { onPhoneLocation(it, primary = it.provider == provider, remembered = true) }
         }
-        val listener = LocationListener { onPhoneLocation(it) }
-        runCatching {
-            if (Build.VERSION.SDK_INT >= 31) {
-                // The real GPS: a balanced request would settle for the mobile network, too vague on a road. It
-                // runs only while a map is on screen and the car's own GPS is not there
-                val request = LocationRequest.Builder(PHONE_INTERVAL_MS).setQuality(LocationRequest.QUALITY_HIGH_ACCURACY).build()
-                lm.requestLocationUpdates(provider, request, context.mainExecutor, listener)
-            } else {
-                lm.requestLocationUpdates(provider, PHONE_INTERVAL_MS, 0f, listener, Looper.getMainLooper())
-            }
-        }.onSuccess { phoneListener = listener }
+        // The real GPS once a second: the fused location hands over the mobile network's guess, hundreds of metres
+        // off, whenever the GPS pauses. The network is heard too, slower, but only counts while the GPS is quiet
+        val listener = LocationListener { onPhoneLocation(it, primary = true) }
+        if (!request(context, lm, provider, PHONE_INTERVAL_MS, listener)) return
+        phoneListener = listener
+        if (provider == LocationManager.GPS_PROVIDER && enabled(lm, LocationManager.NETWORK_PROVIDER)) {
+            val fallback = LocationListener { onPhoneLocation(it, primary = false) }
+            if (request(context, lm, LocationManager.NETWORK_PROVIDER, FALLBACK_INTERVAL_MS, fallback)) fallbackListener = fallback
+        }
+        phoneAskedAt = SystemClock.elapsedRealtime()
+        if (!again) EventLog.log("Map: asking the phone's $provider every ${PHONE_INTERVAL_MS / 1000} s${if (fallbackListener != null) ", the network as fallback" else ""}")
     }
+
+    @SuppressLint("MissingPermission")
+    private fun request(context: Context, lm: LocationManager, provider: String, intervalMs: Long, listener: LocationListener): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val quality = if (provider == LocationManager.NETWORK_PROVIDER) LocationRequest.QUALITY_BALANCED_POWER_ACCURACY else LocationRequest.QUALITY_HIGH_ACCURACY
+            val request = LocationRequest.Builder(intervalMs).setQuality(quality).setMinUpdateDistanceMeters(0f).build()
+            lm.requestLocationUpdates(provider, request, context.mainExecutor, listener)
+        } else {
+            lm.requestLocationUpdates(provider, intervalMs, 0f, listener, Looper.getMainLooper())
+        }
+    }.isSuccess
 
     private fun stopPhone() {
-        val listener = phoneListener ?: return
-        context?.getSystemService(LocationManager::class.java)?.removeUpdates(listener)
+        val lm = context?.getSystemService(LocationManager::class.java)
+        phoneListener?.let { lm?.removeUpdates(it) }
+        fallbackListener?.let { lm?.removeUpdates(it) }
         phoneListener = null
+        fallbackListener = null
     }
 
-    private fun onPhoneLocation(loc: Location, remembered: Boolean = false) {
+    /**
+     * A fix from the phone: [primary] from the provider asked once a second (its GPS, or the only one there is), else
+     * the network fallback. [remembered]: a last known position, not a delivery.
+     */
+    private fun onPhoneLocation(loc: Location, primary: Boolean, remembered: Boolean = false) {
         if (carLive()) return
+        val now = SystemClock.elapsedRealtime()
         val accuracy = if (loc.hasAccuracy()) loc.accuracy else null
-        // In a tunnel the phone may still guess from the mobile network, hundreds of metres off: the car's
-        // own reckoning is better then
-        if (source == MapSource.ESTIMATED && (accuracy == null || accuracy > ESTIMATE_BEATS_M)) return
+        // A provider that leaves the time out is taken as live
+        val ageMs = if (loc.elapsedRealtimeNanos == 0L) 0L else ((SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1_000_000).coerceAtLeast(0L)
+        val verdict = phoneFixVerdict(
+            primary, ageMs, accuracy,
+            sinceGpsMs = if (lastGpsAt == 0L) null else now - lastGpsAt,
+            estimating = source == MapSource.ESTIMATED,
+        )
+        val last = _fix.value
+        val details = "${loc.provider}, accuracy ${accuracy?.roundToInt() ?: "?"} m, age ${String.format(Locale.ROOT, "%.1f", ageMs / 1000.0)} s" +
+            (last?.let { ", ${distanceM(it.latitude, it.longitude, loc.latitude, loc.longitude).roundToInt()} m from the last" } ?: "")
+        if (primary && !remembered) {
+            // Every hole in the GPS's deliveries tells something on the next drive: throttled, batched, no sky
+            val gap = if (lastPhoneAt == 0L) null else now - lastPhoneAt
+            if (gap != null && gap > GAP_LOG_MS) {
+                EventLog.log("Map: phone fix after ${gap / 1000} s without (${if (reasked > 0) "asked again $reasked time(s), " else ""}$details; ${phoneState()})")
+            }
+            lastPhoneAt = now
+            reasked = 0
+        }
+        if (verdict != PhoneVerdict.USE) {
+            if (verdict == PhoneVerdict.GPS_BETTER || remembered) return
+            if (dropping != verdict) EventLog.log("Map: phone fix left out, ${if (verdict == PhoneVerdict.OLD) "delivered late" else "too vague"} ($details)")
+            dropping = verdict
+            return
+        }
+        dropping = null
+        if (!remembered) {
+            if (primary) lastGpsAt = now
+            // Which of the phone's providers moves the car, when it changes (the GPS, the network while it is quiet)
+            if (source == MapSource.PHONE && phoneSource != loc.provider) EventLog.log("Map: following the phone's ${loc.provider} ($details)")
+            phoneSource = loc.provider
+        }
         onFix(
             loc.latitude, loc.longitude,
             if (loc.hasBearing()) loc.bearing else null,
@@ -223,15 +316,20 @@ object MapLocation {
             accuracy,
             MapSource.PHONE,
             remembered = remembered,
+            at = now - ageMs,
+            details = details,
         )
     }
 
-    private fun onFix(latitude: Double, longitude: Double, bearing: Float?, speedMs: Float?, accuracyM: Float?, from: MapSource, remembered: Boolean = false) {
+    private fun onFix(
+        latitude: Double, longitude: Double, bearing: Float?, speedMs: Float?, accuracyM: Float?, from: MapSource,
+        remembered: Boolean = false, at: Long? = null, details: String? = null,
+    ) {
         val now = SystemClock.elapsedRealtime()
         val last = _fix.value
         if (!remembered) {
             lastRealAt = now
-            setSource(from)
+            setSource(from, details)
             _problem.value = MapLocationProblem.NONE
             _lost.value = false
         }
@@ -240,7 +338,8 @@ object MapLocation {
         if (last != null && last.source != MapSource.ESTIMATED && !remembered) {
             gyro.learn(last.bearing, heading, (now - last.at) / 1000.0, speedMs, carMotion(VehicleData.snapshot.value)?.rotation?.third)
         }
-        _fix.value = MapFix(latitude, longitude, heading, speedMs, accuracyM, from, now)
+        // A remembered position keeps its own time: the guidance, waiting for a fix from now, must not take it
+        _fix.value = MapFix(latitude, longitude, heading, speedMs, accuracyM, from, if (remembered) at ?: now else now)
     }
 
     /** Once a second: with no GPS for a few seconds, moves the car on as the car says it moves. */
@@ -249,8 +348,15 @@ object MapLocation {
             delay(RECKON_STEP_MS)
             val last = _fix.value ?: continue
             val now = SystemClock.elapsedRealtime()
+            // No fix since the start: what is shown was kept from before, and once that is old it says so
+            if (lastRealAt == 0L) {
+                val lost = now - last.at > LOST_AFTER_MS
+                if (lost && !_lost.value) EventLog.log("Map: no fix yet, the last known position (${(now - last.at) / 1000} s old) is shown")
+                _lost.value = lost
+                continue
+            }
             val quiet = now - lastRealAt
-            if (lastRealAt == 0L || quiet < RECKON_AFTER_MS) {
+            if (quiet < RECKON_AFTER_MS) {
                 _lost.value = false
                 continue
             }
@@ -284,7 +390,7 @@ object MapLocation {
     private fun carMotion(snapshot: VehicleSnapshot) =
         snapshot.motion?.takeIf { System.currentTimeMillis() - it.at < CAR_DATA_FRESH_MS }?.value
 
-    private fun setSource(value: MapSource) {
+    private fun setSource(value: MapSource, details: String? = null) {
         if (source == value) return
         EventLog.log(
             when (value) {
@@ -292,7 +398,7 @@ object MapLocation {
                 MapSource.PHONE -> "Map: following the phone's location"
                 MapSource.ESTIMATED -> "Map: no GPS, estimating from the car's speed" +
                     if (gyro.sense != 0) " and gyroscope" else ""
-            },
+            } + (details?.let { " ($it)" } ?: ""),
         )
         source = value
     }
@@ -313,19 +419,43 @@ object MapLocation {
         return last.bearing
     }
 
-    private fun bestProvider(lm: LocationManager): String? {
-        if (Build.VERSION.SDK_INT >= 31 && lm.hasProvider(LocationManager.FUSED_PROVIDER) && lm.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
-            return LocationManager.FUSED_PROVIDER
-        }
-        return listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            .firstOrNull { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
+    /**
+     * For the log: whether the phone's screen is on and how much the system thinks of this app (100 foreground,
+     * 125 foreground service, 200+ less): a phone that stops the GPS for apps in the background shows here.
+     */
+    private fun phoneState(): String {
+        val context = context ?: return "?"
+        val screen = context.getSystemService(PowerManager::class.java)?.isInteractive
+        val app = ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance
+        return "screen ${if (screen == true) "on" else if (screen == false) "off" else "?"}, app importance $app"
     }
 
-    private const val PHONE_INTERVAL_MS = 1_000L
-    private const val PHONE_CHECK_MS = 2_000L
+    /** The phone's own GPS; without one (switched off, a tablet) the fused location, else the network's. */
+    private fun phoneProvider(lm: LocationManager): String? {
+        if (enabled(lm, LocationManager.GPS_PROVIDER)) return LocationManager.GPS_PROVIDER
+        if (Build.VERSION.SDK_INT >= 31 && enabled(lm, LocationManager.FUSED_PROVIDER)) return LocationManager.FUSED_PROVIDER
+        return LocationManager.NETWORK_PROVIDER.takeIf { enabled(lm, it) }
+    }
 
-    /** A remembered fix older than this would show the car somewhere else. */
-    private const val LAST_KNOWN_MAX_AGE_MS = 30 * 60_000L
+    private fun enabled(lm: LocationManager, provider: String) =
+        runCatching { lm.allProviders.contains(provider) && lm.isProviderEnabled(provider) }.getOrDefault(false)
+
+    /**
+     * How long the phone's quiet location waits before it is asked again: longer for a first fix (a GPS starting cold
+     * may take half a minute, asking again would only start it over), then longer each time in a row (a long tunnel).
+     */
+    internal fun phoneSilentMs(hadFix: Boolean, reasked: Int): Long =
+        if (!hadFix) PHONE_FIRST_FIX_MS else minOf(PHONE_SILENT_MS * (reasked + 1), PHONE_SILENT_MAX_MS)
+
+    private const val PHONE_INTERVAL_MS = 1_000L
+    private const val FALLBACK_INTERVAL_MS = 5_000L
+    private const val PHONE_CHECK_MS = 2_000L
+    /** The phone's GPS this long without a word: asked again. */
+    private const val PHONE_SILENT_MS = 10_000L
+    private const val PHONE_SILENT_MAX_MS = 60_000L
+    private const val PHONE_FIRST_FIX_MS = 45_000L
+    /** A hole this long in the phone's deliveries goes in the log. */
+    private const val GAP_LOG_MS = 5_000L
 
     /** Below this (about 5 km/h) the bearing is noise. */
     private const val MOVING_MS = 1.5f
@@ -343,7 +473,42 @@ object MapLocation {
     private const val STANDING_KMH = 1.0
     private const val CAR_DATA_FRESH_MS = 3_000L
     /** A phone fix vaguer than this doesn't end the estimate. */
-    private const val ESTIMATE_BEATS_M = 60f
+    internal const val ESTIMATE_BEATS_M = 60f
+}
+
+/** What a phone fix is worth to the map. */
+internal enum class PhoneVerdict {
+    USE,
+    /** Delivered late (remembered, batched): the car was there, it is not there now. */
+    OLD,
+    /** Too vague to put the car on a road (a network guess). */
+    VAGUE,
+    /** A network fix while the GPS speaks: the GPS is better. */
+    GPS_BETTER,
+}
+
+/** Older than this at delivery, a phone fix is where the car was. A live one is well under a second. */
+internal const val PHONE_FIX_MAX_AGE_MS = 5_000L
+
+/** A phone fix vaguer than this would put the car on another road, or in the sea. */
+internal const val PHONE_FIX_MAX_ERROR_M = 100f
+
+/** The network location only after the phone's GPS has been quiet this long. */
+internal const val GPS_PREFERRED_MS = 5_000L
+
+/**
+ * Whether a phone fix may move the car: [primary] (from the provider asked once a second, the GPS or the only one
+ * there is; else the network fallback), its [ageMs] at delivery, [accuracyM], the time since the last primary fix
+ * used ([sinceGpsMs], null with none yet), and whether the position is [estimating] from the car's speed (then only
+ * a fix as good as the estimate ends it).
+ */
+internal fun phoneFixVerdict(primary: Boolean, ageMs: Long, accuracyM: Float?, sinceGpsMs: Long?, estimating: Boolean): PhoneVerdict {
+    if (ageMs > PHONE_FIX_MAX_AGE_MS) return PhoneVerdict.OLD
+    if (!primary && sinceGpsMs != null && sinceGpsMs < GPS_PREFERRED_MS) return PhoneVerdict.GPS_BETTER
+    val limit = if (estimating) MapLocation.ESTIMATE_BEATS_M else PHONE_FIX_MAX_ERROR_M
+    // A network fix that does not say how good it is: not good enough. The GPS's are
+    val accuracy = accuracyM ?: if (primary) 0f else Float.MAX_VALUE
+    return if (accuracy > limit) PhoneVerdict.VAGUE else PhoneVerdict.USE
 }
 
 /**

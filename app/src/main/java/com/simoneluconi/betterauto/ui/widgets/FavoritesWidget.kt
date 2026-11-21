@@ -54,6 +54,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.phone.Avatar
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.verticalScrollWithBar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,8 +98,8 @@ fun FavoritesWidget(settings: LauncherSettings, modifier: Modifier = Modifier) {
 
     Column(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

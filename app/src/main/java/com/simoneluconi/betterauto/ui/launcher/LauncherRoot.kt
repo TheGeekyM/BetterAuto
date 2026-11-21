@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,18 +77,18 @@ import com.simoneluconi.betterauto.settings.WidgetType
 import com.simoneluconi.betterauto.ui.CarBringIntoView
 import com.simoneluconi.betterauto.ui.LocalFormatLocale
 import com.simoneluconi.betterauto.ui.theme.CarTheme
-import com.simoneluconi.betterauto.ui.theme.LocalCarColors
 import com.simoneluconi.betterauto.ui.widgets.MusicScreen
+import com.simoneluconi.betterauto.ui.widgets.RadioScreen
 import com.simoneluconi.betterauto.ui.map.MapScreen
 import com.simoneluconi.betterauto.ui.map.NavOverlayShown
+import com.simoneluconi.betterauto.map.MapLocation
+import com.simoneluconi.betterauto.prayer.Azan
 import com.simoneluconi.betterauto.map.nav.Navigation
 import com.simoneluconi.betterauto.map.nav.Trip
 import com.simoneluconi.betterauto.ui.widgets.WidgetArea
 import com.simoneluconi.betterauto.ui.widgets.LocalProjected
 import com.simoneluconi.betterauto.ui.widgets.HomeEdit
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
 import kotlin.math.min
 
 /**
@@ -139,8 +138,6 @@ private fun LauncherContent(focus: LauncherFocus?, insets: PaddingValues) {
     val settings = remember { LauncherSettings.get(context) }
     val themeMode by settings.themeMode.collectAsStateWithLifecycle()
     val carNight by CarState.nightMode.collectAsStateWithLifecycle()
-    // Only the accent: a new Track arrives on every position or queue update, the root must not recompose for those
-    val accent by remember { NowPlaying.track.map { it?.accent }.distinctUntilChanged() }.collectAsStateWithLifecycle(null)
     val section by settings.section.collectAsStateWithLifecycle()
     val barSetting by settings.barPosition.collectAsStateWithLifecycle()
     val debug by settings.debugOverlay.collectAsStateWithLifecycle()
@@ -170,7 +167,16 @@ private fun LauncherContent(focus: LauncherFocus?, insets: PaddingValues) {
     val projected = focus != null
     DisposableEffect(projected) {
         if (projected) Navigation.screenShown(context)
-        onDispose { if (projected) Navigation.screenGone() }
+        // The position for the whole session, map on screen or not: a phone GPS started only as a map opens may take
+        // a while to find the car, meanwhile showing it where the last map saw it
+        val releaseLocation = if (projected) MapLocation.request(context) else null
+        // The Azan at prayer times, while the car's screen is up
+        val releaseAzan = if (projected) Azan.watch(context) else null
+        onDispose {
+            releaseLocation?.invoke()
+            releaseAzan?.invoke()
+            if (projected) Navigation.screenGone()
+        }
     }
     // The map brought forward takes the knob, unless the driver is on the bar
     var focusMap by remember { mutableIntStateOf(0) }
@@ -242,203 +248,206 @@ private fun LauncherContent(focus: LauncherFocus?, insets: PaddingValues) {
         }
     }
 
-    CarTheme(night = night, album = accent) {
-        val colors = LocalCarColors.current
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .background(colors.bg)
-                .onFocusChanged { hasFocus = it.hasFocus }
-                .onPreviewKeyEvent { event ->
-                    val down = event.type == KeyEventType.KeyDown
-                    // Back stops listening before anything else
-                    if ((event.key == Key.Back || event.key == Key.Escape) && VoiceAssistant.isBusy) {
-                        if (!down) VoiceAssistant.cancel()
-                        return@onPreviewKeyEvent true
-                    }
-                    // Then the editors, one level at a time, wherever the focus is
-                    if ((event.key == Key.Back || event.key == Key.Escape) && (BarEditor.open.value || HomeEdit.active.value)) {
-                        if (!down) {
-                            if (BarEditor.open.value) BarEditor.close() else HomeEdit.back()
-                        }
-                        return@onPreviewKeyEvent true
-                    }
-                    // The arrival panel, also when something took the focus out of it
-                    if ((event.key == Key.Back || event.key == Key.Escape) && ArrivalPanelShown.value) {
-                        if (!down) SmartHome.arrival?.closePanel()
-                        return@onPreviewKeyEvent true
-                    }
-                    // The arrival panel waits for the driver: a knob move while the focus is elsewhere (the screen
-                    // took it back as the session started) first brings it to the panel
-                    if (ArrivalPanelShown.value && !ArrivalPanelShown.hasFocus && event.key in KnobKeys) {
-                        if (down) ArrivalPanelShown.first?.let { runCatching { it.requestFocus() } }
-                        return@onPreviewKeyEvent true
-                    }
-                    // The map's overlays the same way: Back goes one level back in them (a place put down, the trip
-                    // page, the overlay), wherever the focus is; a knob move from outside lands in them
-                    if (NavOverlayShown.value && shownCall == null) {
-                        if (event.key == Key.Back || event.key == Key.Escape) {
-                            if (!down) NavOverlayShown.back?.invoke()
+    CarTheme(night = night) {
+        // The glass sits on the page and the playing cover, blurred; it reaches the hidden edges too
+        Box(Modifier.fillMaxSize()) {
+            Backdrop(Modifier.fillMaxSize())
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { hasFocus = it.hasFocus }
+                    .onPreviewKeyEvent { event ->
+                        val down = event.type == KeyEventType.KeyDown
+                        // Back stops listening before anything else
+                        if ((event.key == Key.Back || event.key == Key.Escape) && VoiceAssistant.isBusy) {
+                            if (!down) VoiceAssistant.cancel()
                             return@onPreviewKeyEvent true
                         }
-                        if (!NavOverlayShown.hasFocus && event.key in KnobKeys) {
-                            if (down) NavOverlayShown.first?.let { runCatching { it.requestFocus() } }
+                        // Then the editors, one level at a time, wherever the focus is
+                        if ((event.key == Key.Back || event.key == Key.Escape) && (BarEditor.open.value || HomeEdit.active.value)) {
+                            if (!down) {
+                                if (BarEditor.open.value) BarEditor.close() else HomeEdit.back()
+                            }
                             return@onPreviewKeyEvent true
                         }
-                    }
-                    // Knob nudges move between zones (the bar, each widget or panel of the screen); turning goes
-                    // through every control. Not out of a panel that waits for the driver: there they move inside it
-                    val toScreen = when {
-                        !railVertical -> Key.DirectionUp
-                        railRight -> Key.DirectionLeft
-                        else -> Key.DirectionRight
-                    }
-                    val toBar = when {
-                        !railVertical -> Key.DirectionDown
-                        railRight -> Key.DirectionRight
-                        else -> Key.DirectionLeft
-                    }
-                    val nudge = when (event.key) {
-                        Key.DirectionLeft -> FocusDirection.Left
-                        Key.DirectionRight -> FocusDirection.Right
-                        Key.DirectionUp -> FocusDirection.Up
-                        Key.DirectionDown -> FocusDirection.Down
-                        else -> null
-                    }
-                    val panelOpen = ArrivalPanelShown.value || NavOverlayShown.value || VoiceAssistant.isBusy || BarEditor.open.value || HomeEdit.active.value
-                    if (shownCall == null && hasFocus && !panelOpen && nudge != null) {
-                        if (railHasFocus) {
-                            if (event.key == toScreen) {
-                                // Back where the knob was on this screen; the main control the first time
-                                if (down && !CarZones.returnToLast() && !contentFocus.requestFocus()) focusManager.moveFocus(nudge)
+                        // The arrival panel, also when something took the focus out of it
+                        if ((event.key == Key.Back || event.key == Key.Escape) && ArrivalPanelShown.value) {
+                            if (!down) SmartHome.arrival?.closePanel()
+                            return@onPreviewKeyEvent true
+                        }
+                        // The arrival panel waits for the driver: a knob move while the focus is elsewhere (the screen
+                        // took it back as the session started) first brings it to the panel
+                        if (ArrivalPanelShown.value && !ArrivalPanelShown.hasFocus && event.key in KnobKeys) {
+                            if (down) ArrivalPanelShown.first?.let { runCatching { it.requestFocus() } }
+                            return@onPreviewKeyEvent true
+                        }
+                        // The map's overlays the same way: Back goes one level back in them (a place put down, the trip
+                        // page, the overlay), wherever the focus is; a knob move from outside lands in them
+                        if (NavOverlayShown.value && shownCall == null) {
+                            if (event.key == Key.Back || event.key == Key.Escape) {
+                                if (!down) NavOverlayShown.back?.invoke()
                                 return@onPreviewKeyEvent true
                             }
-                            // Along the bar: from section to section
-                        } else {
-                            if (down) {
-                                when {
-                                    CarZones.moveBeside(nudge) -> Unit
-                                    // From the last zone toward the bar: the current section
-                                    event.key == toBar -> {
-                                        CarZones.leaving()
-                                        railFocus.requestFocus()
-                                    }
-                                    // Across the bar's axis with no zone that way: within the screen
-                                    event.key != toScreen -> focusManager.moveFocus(nudge)
-                                }
+                            if (!NavOverlayShown.hasFocus && event.key in KnobKeys) {
+                                if (down) NavOverlayShown.first?.let { runCatching { it.requestFocus() } }
+                                return@onPreviewKeyEvent true
                             }
-                            return@onPreviewKeyEvent true
+                        }
+                        // Knob nudges move between zones (the bar, each widget or panel of the screen); turning goes
+                        // through every control. Not out of a panel that waits for the driver: there they move inside it
+                        val toScreen = when {
+                            !railVertical -> Key.DirectionUp
+                            railRight -> Key.DirectionLeft
+                            else -> Key.DirectionRight
+                        }
+                        val toBar = when {
+                            !railVertical -> Key.DirectionDown
+                            railRight -> Key.DirectionRight
+                            else -> Key.DirectionLeft
+                        }
+                        val nudge = when (event.key) {
+                            Key.DirectionLeft -> FocusDirection.Left
+                            Key.DirectionRight -> FocusDirection.Right
+                            Key.DirectionUp -> FocusDirection.Up
+                            Key.DirectionDown -> FocusDirection.Down
+                            else -> null
+                        }
+                        val panelOpen = ArrivalPanelShown.value || NavOverlayShown.value || VoiceAssistant.isBusy || BarEditor.open.value || HomeEdit.active.value
+                        if (shownCall == null && hasFocus && !panelOpen && nudge != null) {
+                            if (railHasFocus) {
+                                if (event.key == toScreen) {
+                                    // Back where the knob was on this screen; the main control the first time
+                                    if (down && !CarZones.returnToLast() && !contentFocus.requestFocus()) focusManager.moveFocus(nudge)
+                                    return@onPreviewKeyEvent true
+                                }
+                                // Along the bar: from section to section
+                            } else {
+                                if (down) {
+                                    when {
+                                        CarZones.moveBeside(nudge) -> Unit
+                                        // From the last zone toward the bar: the current section
+                                        event.key == toBar -> {
+                                            CarZones.leaving()
+                                            railFocus.requestFocus()
+                                        }
+                                        // Across the bar's axis with no zone that way: within the screen
+                                        event.key != toScreen -> focusManager.moveFocus(nudge)
+                                    }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                        when (event.key) {
+                            Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                                // What plays, the radio included (the player's own button stays on the song)
+                                if (down) if (NowPlaying.isPlaying) NowPlaying.pause() else NowPlaying.resume()
+                                true
+                            }
+                            Key.MediaNext -> {
+                                if (down) NowPlaying.skipNext()
+                                true
+                            }
+                            Key.MediaPrevious -> {
+                                if (down) NowPlaying.skipPrevious()
+                                true
+                            }
+                            else -> false
                         }
                     }
-                    when (event.key) {
-                        Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
-                            if (down) NowPlaying.playPause()
-                            true
+                    .onKeyEvent { event ->
+                        if (event.key != Key.Back && event.key != Key.Escape) return@onKeyEvent false
+                        if (event.type == KeyEventType.KeyUp && section != Section.HOME) {
+                            // The notifications are a detour: back to where the driver came from; elsewhere, home
+                            if (section == Section.NOTIFICATIONS) settings.closeNotifications() else settings.setSection(Section.HOME)
+                            // The ring follows to the bar's entry of the section now shown, not left on the old one or lost
+                            if (hasFocus) refocusRail++
                         }
-                        Key.MediaNext -> {
-                            if (down) NowPlaying.next()
-                            true
-                        }
-                        Key.MediaPrevious -> {
-                            if (down) NowPlaying.previous()
-                            true
-                        }
-                        else -> false
+                        section != Section.HOME
+                    }
+                    .padding(insets),
+            ) {
+                val left = when (barSetting) {
+                    BarPosition.LEFT -> true
+                    BarPosition.BOTTOM -> false
+                    BarPosition.AUTO -> maxWidth / maxHeight >= 1.3f
+                }
+                SideEffect { railVertical = left }
+                val main = @Composable { mod: Modifier ->
+                    CompositionLocalProvider(LocalContentFocus provides contentFocus) { MainArea(section, settings, mod) }
+                }
+                val rail = @Composable { vertical: Boolean ->
+                    Box(Modifier.onFocusChanged { railHasFocus = it.hasFocus }) {
+                        AppRail(settings, section, vertical = vertical, firstFocus = railFocus, onOpenGroup = { openGroup = it })
                     }
                 }
-                .onKeyEvent { event ->
-                    if (event.key != Key.Back && event.key != Key.Escape) return@onKeyEvent false
-                    if (event.type == KeyEventType.KeyUp && section != Section.HOME) {
-                        // The notifications are a detour: back to where the driver came from; elsewhere, home
-                        if (section == Section.NOTIFICATIONS) settings.closeNotifications() else settings.setSection(Section.HOME)
-                        // The ring follows to the bar's entry of the section now shown, not left on the old one or lost
-                        if (hasFocus) refocusRail++
+                val current = shownCall
+                if (current != null) {
+                    // The call takes the whole screen, so the knob only moves between its buttons
+                    CallScreen(current, callFocus, Modifier.fillMaxSize())
+                } else if (left) {
+                    Row(Modifier.fillMaxSize()) {
+                        if (!railRight) rail(true)
+                        main(Modifier.weight(1f))
+                        if (railRight) rail(true)
                     }
-                    section != Section.HOME
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        main(Modifier.weight(1f))
+                        rail(false)
+                    }
                 }
-                .padding(insets),
-        ) {
-            val left = when (barSetting) {
-                BarPosition.LEFT -> true
-                BarPosition.BOTTOM -> false
-                BarPosition.AUTO -> maxWidth / maxHeight >= 1.3f
-            }
-            SideEffect { railVertical = left }
-            val main = @Composable { mod: Modifier ->
-                CompositionLocalProvider(LocalContentFocus provides contentFocus) { MainArea(section, settings, mod) }
-            }
-            val rail = @Composable { vertical: Boolean ->
-                Box(Modifier.onFocusChanged { railHasFocus = it.hasFocus }) {
-                    AppRail(settings, section, vertical = vertical, firstFocus = railFocus, onOpenGroup = { openGroup = it }, onRight = vertical && railRight)
+                // The bar's editor: after it closes, back where the knob was, else on the bar
+                val arranging by BarEditor.open.collectAsStateWithLifecycle()
+                var wasArranging by remember { mutableStateOf(false) }
+                LaunchedEffect(arranging) {
+                    if (wasArranging && !arranging) {
+                        withFrameNanos { }
+                        if (!BarEditor.restoreFocus()) refocusRail++
+                    }
+                    wasArranging = arranging
                 }
-            }
-            val current = shownCall
-            if (current != null) {
-                // The call takes the whole screen, so the knob only moves between its buttons
-                CallScreen(current, callFocus, Modifier.fillMaxSize())
-            } else if (left) {
-                Row(Modifier.fillMaxSize()) {
-                    if (!railRight) rail(true)
-                    main(Modifier.weight(1f))
-                    if (railRight) rail(true)
+                if (current == null) {
+                    BarEditorScrim(Modifier.fillMaxSize())
+                    BarEditorPanel(
+                        settings,
+                        maxHeight = maxHeight - 48.dp,
+                        modifier = if (left) Modifier.align(Alignment.CenterStart).padding(start = 124.dp, end = 24.dp)
+                        else Modifier.align(Alignment.BottomCenter).padding(bottom = 116.dp, start = 24.dp, end = 24.dp),
+                    )
                 }
-            } else {
-                Column(Modifier.fillMaxSize()) {
-                    main(Modifier.weight(1f))
-                    rail(false)
+                openGroup?.let { slot ->
+                    RailGroupPanel(
+                        settings, slot, section,
+                        onClose = {
+                            openGroup = null
+                            refocusRail++
+                        },
+                        modifier = if (left) Modifier.align(Alignment.CenterStart).padding(start = 124.dp)
+                        else Modifier.align(Alignment.BottomCenter).padding(bottom = 116.dp),
+                    )
                 }
-            }
-            // The bar's editor: after it closes, back where the knob was, else on the bar
-            val arranging by BarEditor.open.collectAsStateWithLifecycle()
-            var wasArranging by remember { mutableStateOf(false) }
-            LaunchedEffect(arranging) {
-                if (wasArranging && !arranging) {
-                    withFrameNanos { }
-                    if (!BarEditor.restoreFocus()) refocusRail++
+                VoiceScrim(Modifier.fillMaxSize())
+                if (current == null) ArrivalScrim(Modifier.fillMaxSize())
+                // Centered over the screen beside the app bar, where the driver looks, not over the whole frame
+                val besideRail = when {
+                    current != null -> Modifier
+                    left -> Modifier.padding(start = RAIL_WIDTH)
+                    else -> Modifier.padding(bottom = RAIL_HEIGHT)
                 }
-                wasArranging = arranging
+                // Arrival buttons where the voice panel goes; never over a call
+                if (current == null) ArrivalPanel(Modifier.align(Alignment.BottomCenter).then(besideRail).padding(bottom = 28.dp, start = 24.dp, end = 24.dp))
+                VoiceOverlay(Modifier.align(Alignment.BottomCenter).then(besideRail).padding(bottom = 28.dp, start = 24.dp, end = 24.dp))
+                // No banner over a call, nor on the notifications screen itself
+                if (shownCall == null && section != Section.NOTIFICATIONS) {
+                    // At the very top, over the status bar, where it hides the least
+                    NotificationBanner(
+                        settings,
+                        Modifier.align(Alignment.TopCenter).then(if (left) Modifier.padding(start = RAIL_WIDTH) else Modifier)
+                            .padding(top = 10.dp, start = 24.dp, end = 24.dp),
+                    )
+                }
+                if (debug) DebugOverlay(Modifier.align(Alignment.TopEnd).padding(top = 88.dp, end = 28.dp))
             }
-            if (current == null) {
-                BarEditorScrim(Modifier.fillMaxSize())
-                BarEditorPanel(
-                    settings,
-                    maxHeight = maxHeight - 48.dp,
-                    modifier = if (left) Modifier.align(Alignment.CenterStart).padding(start = 124.dp, end = 24.dp)
-                    else Modifier.align(Alignment.BottomCenter).padding(bottom = 116.dp, start = 24.dp, end = 24.dp),
-                )
-            }
-            openGroup?.let { slot ->
-                RailGroupPanel(
-                    settings, slot, section,
-                    onClose = {
-                        openGroup = null
-                        refocusRail++
-                    },
-                    modifier = if (left) Modifier.align(Alignment.CenterStart).padding(start = 124.dp)
-                    else Modifier.align(Alignment.BottomCenter).padding(bottom = 116.dp),
-                )
-            }
-            VoiceScrim(Modifier.fillMaxSize())
-            if (current == null) ArrivalScrim(Modifier.fillMaxSize())
-            // Centered over the screen beside the app bar, where the driver looks, not over the whole frame
-            val besideRail = when {
-                current != null -> Modifier
-                left -> Modifier.padding(start = RAIL_WIDTH)
-                else -> Modifier.padding(bottom = RAIL_HEIGHT)
-            }
-            // Arrival buttons where the voice panel goes; never over a call
-            if (current == null) ArrivalPanel(Modifier.align(Alignment.BottomCenter).then(besideRail).padding(bottom = 28.dp, start = 24.dp, end = 24.dp))
-            VoiceOverlay(Modifier.align(Alignment.BottomCenter).then(besideRail).padding(bottom = 28.dp, start = 24.dp, end = 24.dp))
-            // No banner over a call, nor on the notifications screen itself
-            if (shownCall == null && section != Section.NOTIFICATIONS) {
-                // At the very top, over the status bar, where it hides the least
-                NotificationBanner(
-                    settings,
-                    Modifier.align(Alignment.TopCenter).then(if (left) Modifier.padding(start = RAIL_WIDTH) else Modifier)
-                        .padding(top = 10.dp, start = 24.dp, end = 24.dp),
-                )
-            }
-            if (debug) DebugOverlay(Modifier.align(Alignment.TopEnd).padding(top = 88.dp, end = 28.dp))
         }
     }
 }
@@ -478,6 +487,7 @@ private fun MainArea(section: Section, settings: LauncherSettings, modifier: Mod
                 Section.NOTIFICATIONS -> NotificationsWidget(settings, Modifier.fillMaxSize(), primary = true)
                 Section.SETTINGS -> SettingsScreen(settings, Modifier.fillMaxSize())
                 Section.SMART_HOME -> SmartHomeScreen(Modifier.fillMaxSize())
+                Section.RADIO -> RadioScreen(Modifier.fillMaxSize())
             }
         }
     }

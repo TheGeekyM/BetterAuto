@@ -1,5 +1,10 @@
 package com.simoneluconi.betterauto.ui.map
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -11,14 +16,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.simoneluconi.betterauto.assist.DrivingAssist
 import com.simoneluconi.betterauto.map.roads.RoadState
 import com.simoneluconi.betterauto.map.roads.RouteRef
 import com.simoneluconi.betterauto.map.roads.ShieldKind
@@ -30,19 +39,30 @@ import com.simoneluconi.betterauto.ui.theme.ShieldUkYellow
 import com.simoneluconi.betterauto.ui.theme.ShieldYellow
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.theme.SignInk
 import com.simoneluconi.betterauto.ui.theme.SignRed
 import com.simoneluconi.betterauto.ui.theme.SignWhite
 import com.simoneluconi.betterauto.ui.vehicle.rememberUnits
 
-/** The speed limit as the road sign shows it: a white disc in a red ring, the number in the driver's units. */
+/**
+ * The speed limit as the road sign shows it: a white disc in a red ring, the number in the driver's units. It pulses
+ * gently while the car is over it ([DrivingAssist.speeding]).
+ */
 @Composable
 fun SpeedLimitSign(limit: SpeedLimit, size: Dp, modifier: Modifier = Modifier) {
     val units = rememberUnits()
     val value = limit.shown(inMph = units.imperial)
+    val speeding by DrivingAssist.speeding.collectAsStateWithLifecycle()
+    val pulse = if (speeding) {
+        rememberInfiniteTransition(label = "limit").animateFloat(
+            1f, 1.12f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "limit pulse",
+        ).value
+    } else 1f
     Box(
         modifier
             .size(size)
+            .graphicsLayer { scaleX = pulse; scaleY = pulse }
             .shadow(6.dp, CircleShape)
             .background(SignWhite, CircleShape)
             .border(size * RING, SignRed, CircleShape),
@@ -70,8 +90,8 @@ fun RoadNamePill(road: RoadState, modifier: Modifier = Modifier) {
         modifier
             .widthIn(max = 560.dp)
             .shadow(6.dp, RoundedCornerShape(50))
+            .glass(RoundedCornerShape(50)) { it.glass }
             .clip(RoundedCornerShape(50))
-            .background(colors.surface)
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

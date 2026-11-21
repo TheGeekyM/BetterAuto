@@ -68,6 +68,7 @@ import com.simoneluconi.betterauto.ui.DragRow
 import com.simoneluconi.betterauto.ui.ReorderList
 import com.simoneluconi.betterauto.ui.theme.CarText
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.launch
 
 /**
@@ -120,8 +121,8 @@ fun SmartHomeCard(onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .clickable(onClick = onClick)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -349,7 +350,7 @@ private fun TickChip(device: SmartDevice, ticked: Boolean, onClick: () -> Unit) 
     Row(
         Modifier
             .clip(shape)
-            .background(if (ticked) colors.focus.copy(alpha = 0.22f) else colors.surface2)
+            .background(if (ticked) colors.accent.copy(alpha = 0.22f) else colors.surface2)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -375,7 +376,7 @@ internal fun PhoneTextField(
         onValueChange = onValueChange,
         singleLine = true,
         textStyle = CarText.copy(color = colors.text, fontSize = 16.sp),
-        cursorBrush = SolidColor(colors.focus),
+        cursorBrush = SolidColor(colors.accent),
         keyboardOptions = KeyboardOptions(keyboardType = keyboard, autoCorrectEnabled = false),
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         decorationBox = { inner ->

@@ -33,6 +33,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.simoneluconi.betterauto.R
 import com.simoneluconi.betterauto.home.WeatherWidgetHost
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /**
  * The phone's weather app widget, drawn by that app and framed in one of our cards. Look-only: touches
@@ -56,8 +57,8 @@ fun WeatherWidget(modifier: Modifier = Modifier) {
     }
     Box(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(18.dp),
         contentAlignment = Alignment.Center,
     ) {

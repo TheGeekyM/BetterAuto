@@ -3,8 +3,13 @@ package com.simoneluconi.betterauto.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.simoneluconi.betterauto.assist.FuelReserve
 import com.simoneluconi.betterauto.car.TemperatureUnit
 import com.simoneluconi.betterauto.car.UnitSystem
+import com.simoneluconi.betterauto.prayer.AsrJuristic
+import com.simoneluconi.betterauto.prayer.AzanSound
+import com.simoneluconi.betterauto.prayer.PrayerCity
+import com.simoneluconi.betterauto.prayer.PrayerMethod
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
@@ -27,13 +32,13 @@ enum class DriverSide {
 }
 
 /** SMART_HOME shows the provider in [com.simoneluconi.betterauto.smarthome.SmartHome.screenProvider]. */
-enum class Section { HOME, MUSIC, MAP, PHONE, VEHICLE, NOTIFICATIONS, SETTINGS, SMART_HOME }
+enum class Section { HOME, MUSIC, MAP, PHONE, VEHICLE, NOTIFICATIONS, SETTINGS, SMART_HOME, RADIO }
 
 /**
  * Kinds of home widget; what each one shows and when it is offered is in `ui/widgets/HomeWidgets`.
  * [takesParam]: only meaningful with a parameter (which smart-home group), never a blank default.
  */
-enum class WidgetType(val takesParam: Boolean = false) { MUSIC, MAP, NOTIFICATIONS, CLOCK, CALENDAR, FAVORITES, WEATHER, SMART_HOME(takesParam = true) }
+enum class WidgetType(val takesParam: Boolean = false) { MUSIC, MAP, NOTIFICATIONS, CLOCK, CALENDAR, FAVORITES, WEATHER, SMART_HOME(takesParam = true), RADIO, PRAYER }
 
 /** How contact names are written and sorted: "Mario Rossi" or "Rossi Mario". */
 enum class NameOrder { FIRST_LAST, LAST_FIRST }
@@ -49,6 +54,9 @@ enum class MapZoom(val level: Double) { CLOSE(19.0), MEDIUM(17.0), FAR(16.0) }
 
 /** What the navigation says: every instruction, only the arrivals (stops, destination), or nothing. */
 enum class GuidanceVoice { FULL, ALERTS, MUTE }
+
+/** New messages in the car: not read, only who wrote ("Message from Ahmed"), or read with a voice reply after. */
+enum class ReadMessages { OFF, ANNOUNCE, READ_REPLY }
 
 /** How big the car screen is drawn: [scale] times the density the car states (Auto: as it states). */
 enum class UiSize(val scale: Double) { SMALLER(0.9), AUTO(1.0), LARGER(1.1), LARGEST(1.2) }
@@ -94,8 +102,11 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
     private val _section = MutableStateFlow(enumOf(KEY_SECTION, Section.HOME))
     val section: StateFlow<Section> = _section
 
-    private val _musicPanel = MutableStateFlow(prefs.getBoolean(KEY_MUSIC_PANEL, false))
-    /** Music section: player plus library panel (true) or full-screen player (false, the default); the screen remembers how it was left. */
+    private val _musicPanel = MutableStateFlow(prefs.getBoolean(KEY_MUSIC_PANEL, true))
+    /**
+     * Music section: the music home and its sections with the mini player (true, the default) or the full-screen player
+     * (false, opened from the mini player); the screen remembers how it was left.
+     */
     val musicPanel: StateFlow<Boolean> = _musicPanel
 
     private val _musicTab = MutableStateFlow(prefs.getString(KEY_MUSIC_TAB, null))
@@ -182,6 +193,30 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
     private val _notificationHiddenApps = MutableStateFlow(loadList(KEY_NOTIF_HIDDEN))
     val notificationHiddenApps: StateFlow<List<String>> = _notificationHiddenApps
 
+    private val _readMessages = MutableStateFlow(enumOf(KEY_READ_MESSAGES, ReadMessages.READ_REPLY))
+    /** Messages read aloud while a car screen is up; see [com.simoneluconi.betterauto.voice.MessageReader]. */
+    val readMessages: StateFlow<ReadMessages> = _readMessages
+
+    fun setReadMessages(value: ReadMessages) = saveEnum(KEY_READ_MESSAGES, value, _readMessages)
+
+    private val _readAloudApps = MutableStateFlow(
+        if (prefs.contains(KEY_READ_APPS)) loadList(KEY_READ_APPS)
+        else com.simoneluconi.betterauto.notifications.MessageText.DefaultApps,
+    )
+    /** The apps whose messages are read aloud (WhatsApp, Telegram and SMS until the driver picks). */
+    val readAloudApps: StateFlow<List<String>> = _readAloudApps
+
+    fun toggleReadAloudApp(packageName: String) {
+        val list = readAloudApps.value
+        saveList(KEY_READ_APPS, if (packageName in list) list - packageName else list + packageName, _readAloudApps)
+    }
+
+    private val _announceCalls = boolFlow(KEY_ANNOUNCE_CALLS, true)
+    /** An incoming call is announced by name, and answered or declined by voice. */
+    val announceCalls: StateFlow<Boolean> = _announceCalls
+
+    fun setAnnounceCalls(value: Boolean) = saveBool(KEY_ANNOUNCE_CALLS, value, _announceCalls)
+
     private val _hiddenCalendars = MutableStateFlow(loadList(KEY_HIDDEN_CALENDARS))
     /** Calendars the calendar widget leaves out, by the provider's id: a new calendar shows up by default. */
     val hiddenCalendars: StateFlow<List<String>> = _hiddenCalendars
@@ -209,6 +244,63 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
     val voiceMicrophone: StateFlow<MicSource> = _voiceMicrophone
 
     fun setVoiceMicrophone(value: MicSource) = saveEnum(KEY_VOICE_MIC, value, _voiceMicrophone)
+
+    private val _spokenVoice = MutableStateFlow(enumOf(KEY_SPOKEN_VOICE, SpokenVoice.DEFAULT))
+    /** The voice of the directions and the replies; see [com.simoneluconi.betterauto.voice.VoiceClips]. */
+    val spokenVoice: StateFlow<SpokenVoice> = _spokenVoice
+
+    fun setSpokenVoice(value: SpokenVoice) = saveEnum(KEY_SPOKEN_VOICE, value, _spokenVoice)
+
+    private val _driverName = MutableStateFlow(prefs.getString(KEY_DRIVER_NAME, null).orEmpty())
+    /** What the assistant calls the driver; personal: on the phone only. Empty: no name. */
+    val driverName: StateFlow<String> = _driverName
+
+    private val _nicknames = MutableStateFlow(prefs.getString(KEY_NICKNAMES, null).orEmpty())
+    /** The driver's nicknames, comma separated, for the online assistant's affectionate tone. */
+    val nicknames: StateFlow<String> = _nicknames
+
+    fun setDriverName(name: String, nicknames: String) {
+        _driverName.value = name.trim()
+        _nicknames.value = nicknames.trim()
+        prefs.edit { putString(KEY_DRIVER_NAME, name.trim()).putString(KEY_NICKNAMES, nicknames.trim()) }
+    }
+
+    private val _voiceBrain = MutableStateFlow(enumOf(KEY_VOICE_BRAIN, VoiceBrain.AUTO))
+    /** Where voice commands are understood: see [VoiceBrain]. */
+    val voiceBrain: StateFlow<VoiceBrain> = _voiceBrain
+
+    fun setVoiceBrain(value: VoiceBrain) = saveEnum(KEY_VOICE_BRAIN, value, _voiceBrain)
+
+    private val _claudeModel = MutableStateFlow(enumOf(KEY_CLAUDE_MODEL, ClaudeModel.SONNET))
+    val claudeModel: StateFlow<ClaudeModel> = _claudeModel
+
+    fun setClaudeModel(value: ClaudeModel) = saveEnum(KEY_CLAUDE_MODEL, value, _claudeModel)
+
+    private val _sttModel = MutableStateFlow(enumOf(KEY_STT_MODEL, SttModel.FLASH_LITE))
+    val sttModel: StateFlow<SttModel> = _sttModel
+
+    fun setSttModel(value: SttModel) = saveEnum(KEY_STT_MODEL, value, _sttModel)
+
+    private val _geminiVoice = MutableStateFlow(enumOf(KEY_GEMINI_VOICE, GeminiVoice.KORE))
+    /** The voice of the online assistant's own answers (the fixed replies stay [spokenVoice]'s recordings). */
+    val geminiVoice: StateFlow<GeminiVoice> = _geminiVoice
+
+    fun setGeminiVoice(value: GeminiVoice) = saveEnum(KEY_GEMINI_VOICE, value, _geminiVoice)
+
+    private val _wakePhrase = MutableStateFlow(prefs.getBoolean(KEY_WAKE_PHRASE, false))
+    /** Listening for "hi batata" on the phone's microphone while a car screen is up ([com.simoneluconi.betterauto.voice.wake.WakeListener]). */
+    val wakePhrase: StateFlow<Boolean> = _wakePhrase
+
+    fun setWakePhrase(value: Boolean) {
+        prefs.edit().putBoolean(KEY_WAKE_PHRASE, value).apply()
+        _wakePhrase.value = value
+    }
+
+    private val _wakeSensitivity = MutableStateFlow(enumOf(KEY_WAKE_SENSITIVITY, WakeSensitivity.NORMAL))
+    /** How readily "hi batata" wakes the assistant: fewer misses against more false wakes. */
+    val wakeSensitivity: StateFlow<WakeSensitivity> = _wakeSensitivity
+
+    fun setWakeSensitivity(value: WakeSensitivity) = saveEnum(KEY_WAKE_SENSITIVITY, value, _wakeSensitivity)
 
     fun setVoiceEnabled(value: Boolean) = saveBool(KEY_VOICE, value, _voiceEnabled)
 
@@ -368,9 +460,73 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
 
     fun setGuidanceVoice(value: GuidanceVoice) = saveEnum(KEY_GUIDANCE_VOICE, value, _guidanceVoice)
 
+    private val _prayerMethod = MutableStateFlow(enumOf(KEY_PRAYER_METHOD, PrayerMethod.EGYPTIAN))
+    /** How the prayer times are computed (the widget and the Azan). */
+    val prayerMethod: StateFlow<PrayerMethod> = _prayerMethod
+
+    fun setPrayerMethod(value: PrayerMethod) = saveEnum(KEY_PRAYER_METHOD, value, _prayerMethod)
+
+    private val _asrJuristic = MutableStateFlow(enumOf(KEY_ASR_JURISTIC, AsrJuristic.SHAFII))
+    val asrJuristic: StateFlow<AsrJuristic> = _asrJuristic
+
+    fun setAsrJuristic(value: AsrJuristic) = saveEnum(KEY_ASR_JURISTIC, value, _asrJuristic)
+
+    private val _prayerCity = MutableStateFlow(enumOf(KEY_PRAYER_CITY, PrayerCity.CAIRO))
+    /** The prayer times' place when neither the car nor the phone has a position. */
+    val prayerCity: StateFlow<PrayerCity> = _prayerCity
+
+    fun setPrayerCity(value: PrayerCity) = saveEnum(KEY_PRAYER_CITY, value, _prayerCity)
+
+    private val _azanSound = MutableStateFlow(enumOf(KEY_AZAN_SOUND, AzanSound.SPOKEN))
+    /** What is heard at prayer time in the car. */
+    val azanSound: StateFlow<AzanSound> = _azanSound
+
+    fun setAzanSound(value: AzanSound) = saveEnum(KEY_AZAN_SOUND, value, _azanSound)
+
     fun setShowEngineLight(value: Boolean) = saveBool(KEY_SHOW_ENGINE, value, _showEngineLight)
 
     fun setShowBell(value: Boolean) = saveBool(KEY_SHOW_BELL, value, _showBell)
+
+    // The driving assistant (assist/DrivingAssist)
+    private val _assistBrief = boolFlow(KEY_ASSIST_BRIEF, true)
+    /** A few words at the start of a drive: greeting, temperature, next appointment, the road to work or home. */
+    val assistBrief: StateFlow<Boolean> = _assistBrief
+
+    fun setAssistBrief(value: Boolean) = saveBool(KEY_ASSIST_BRIEF, value, _assistBrief)
+
+    private val _assistRest = boolFlow(KEY_ASSIST_REST, true)
+    /** A spoken reminder to rest after two hours of driving. */
+    val assistRest: StateFlow<Boolean> = _assistRest
+
+    fun setAssistRest(value: Boolean) = saveBool(KEY_ASSIST_REST, value, _assistRest)
+
+    private val _assistSpeed = boolFlow(KEY_ASSIST_SPEED, true)
+    /** A soft chime over the road's known speed limit. */
+    val assistSpeed: StateFlow<Boolean> = _assistSpeed
+
+    fun setAssistSpeed(value: Boolean) = saveBool(KEY_ASSIST_SPEED, value, _assistSpeed)
+
+    private val _assistFuel = boolFlow(KEY_ASSIST_FUEL, true)
+    /** The nearest station offered when the fuel runs low (cars that share their fuel level). */
+    val assistFuel: StateFlow<Boolean> = _assistFuel
+
+    fun setAssistFuel(value: Boolean) = saveBool(KEY_ASSIST_FUEL, value, _assistFuel)
+
+    private val _fuelReserve = MutableStateFlow(enumOf(KEY_FUEL_RESERVE, FuelReserve.NORMAL))
+    val fuelReserve: StateFlow<FuelReserve> = _fuelReserve
+
+    fun setFuelReserve(value: FuelReserve) = saveEnum(KEY_FUEL_RESERVE, value, _fuelReserve)
+
+    private val _assistParked = boolFlow(KEY_ASSIST_PARKED, true)
+    /** Where the car was left at the end of a drive, kept on the phone. */
+    val assistParked: StateFlow<Boolean> = _assistParked
+
+    fun setAssistParked(value: Boolean) = saveBool(KEY_ASSIST_PARKED, value, _assistParked)
+
+    private val _assistParkedNotify = boolFlow(KEY_ASSIST_PARKED_NOTIFY, true)
+    val assistParkedNotify: StateFlow<Boolean> = _assistParkedNotify
+
+    fun setAssistParkedNotify(value: Boolean) = saveBool(KEY_ASSIST_PARKED_NOTIFY, value, _assistParkedNotify)
 
 
     private fun boolFlow(key: String, default: Boolean) = MutableStateFlow(prefs.getBoolean(key, default))
@@ -513,14 +669,34 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
         private const val KEY_MAP_AUTO_ZOOM = "map_auto_zoom"
         private const val KEY_SHOW_SPEED_LIMIT = "show_speed_limit"
         private const val KEY_GUIDANCE_VOICE = "guidance_voice"
+        private const val KEY_PRAYER_METHOD = "prayer_method"
+        private const val KEY_ASR_JURISTIC = "asr_juristic"
+        private const val KEY_PRAYER_CITY = "prayer_city"
+        private const val KEY_AZAN_SOUND = "azan_sound"
         private const val KEY_ROUTE_SERVER = "route_server"
         private const val KEY_UNITS = "unit_system"
         private const val KEY_TEMPERATURE = "temperature_unit"
         private const val KEY_VOICE_LANGUAGE = "voice_language"
+        private const val KEY_SPOKEN_VOICE = "spoken_voice"
+        private const val KEY_VOICE_BRAIN = "voice_brain"
+        private const val KEY_DRIVER_NAME = "driver_name"
+        private const val KEY_NICKNAMES = "driver_nicknames"
+        private const val KEY_CLAUDE_MODEL = "claude_model"
+        private const val KEY_STT_MODEL = "stt_model"
+        private const val KEY_GEMINI_VOICE = "gemini_voice"
+        private const val KEY_WAKE_PHRASE = "wake_phrase"
+        private const val KEY_WAKE_SENSITIVITY = "wake_sensitivity"
         private const val KEY_FORMAT_REGION = "format_region"
         private const val KEY_SHOW_ENGINE = "show_engine_light"
 
         private const val KEY_SHOW_BELL = "show_bell"
+        private const val KEY_ASSIST_BRIEF = "assist_brief"
+        private const val KEY_ASSIST_REST = "assist_rest"
+        private const val KEY_ASSIST_SPEED = "assist_speed"
+        private const val KEY_ASSIST_FUEL = "assist_fuel"
+        private const val KEY_FUEL_RESERVE = "assist_fuel_reserve"
+        private const val KEY_ASSIST_PARKED = "assist_parked"
+        private const val KEY_ASSIST_PARKED_NOTIFY = "assist_parked_notify"
         private const val KEY_SHOW_SIGNAL = "show_signal"
         private const val KEY_SHOW_BATTERY = "show_battery"
 
@@ -528,6 +704,9 @@ class LauncherSettings private constructor(private val prefs: SharedPreferences)
         private const val KEY_NOTIF_APPS = "notification_apps"
         private const val KEY_NOTIF_HIDDEN = "notification_hidden_apps"
         private const val KEY_HIDDEN_CALENDARS = "hidden_calendars"
+        private const val KEY_READ_MESSAGES = "read_messages"
+        private const val KEY_READ_APPS = "read_aloud_apps"
+        private const val KEY_ANNOUNCE_CALLS = "announce_calls"
         private const val KEY_MUTED_CHATS = "muted_chats"
         private const val MAX_NOTIF_APPS = 40
         private const val KEY_PHONE_TAB = "phone_tab"

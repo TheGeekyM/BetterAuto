@@ -41,7 +41,7 @@ class NavPrompts(context: Context, private val onChange: (Boolean) -> Unit) {
     }
 
     private fun update(configs: List<AudioPlaybackConfiguration>) {
-        val now = configs.any { it.audioAttributes.usage == AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE && it.playing() }
+        val now = guiding(configs)
         if (now) {
             main.removeCallbacks(ended)
             if (!speaking) {
@@ -59,16 +59,24 @@ class NavPrompts(context: Context, private val onChange: (Boolean) -> Unit) {
      * keeps the player's state from apps but prints it ("state:started" while it plays); without that
      * text, any listed player counts.
      */
-    private fun AudioPlaybackConfiguration.playing(): Boolean {
-        val text = toString()
-        val at = text.indexOf(STATE)
-        return at < 0 || text.startsWith("started", at + STATE.length)
-    }
+    companion object {
+        private const val STATE = "state:"
 
-    private companion object {
-        const val STATE = "state:"
+        /** A navigation prompt is playing on the phone now (any app's, ours included). */
+        fun speaking(context: Context): Boolean = runCatching {
+            guiding(context.getSystemService(AudioManager::class.java).activePlaybackConfigurations)
+        }.getOrDefault(false)
+
+        private fun guiding(configs: List<AudioPlaybackConfiguration>) =
+            configs.any { it.audioAttributes.usage == AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE && it.playing() }
+
+        private fun AudioPlaybackConfiguration.playing(): Boolean {
+            val text = toString()
+            val at = text.indexOf(STATE)
+            return at < 0 || text.startsWith("started", at + STATE.length)
+        }
 
         /** After the last prompt: long enough to bridge the pause between two sentences of one instruction. */
-        const val TAIL_MS = 700L
+        private const val TAIL_MS = 700L
     }
 }

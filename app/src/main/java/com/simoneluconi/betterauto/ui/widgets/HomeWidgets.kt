@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.simoneluconi.betterauto.R
 import com.simoneluconi.betterauto.home.WeatherWidgetHost
 import com.simoneluconi.betterauto.settings.LauncherSettings
+import com.simoneluconi.betterauto.settings.Section
 import com.simoneluconi.betterauto.settings.WidgetChoice
 import com.simoneluconi.betterauto.settings.WidgetType
 import com.simoneluconi.betterauto.ui.CarIcons
@@ -18,7 +19,8 @@ import com.simoneluconi.betterauto.smarthome.SmartHome
 import com.simoneluconi.betterauto.ui.smarthome.SmartHomeGroupWidget
 
 /**
- * One kind of home widget: its name and icon in the slot picker, what it offers there and how it is drawn.
+ * One kind of home widget: its name and icon in the slot picker, what it offers there, the page it opens and how
+ * it is drawn.
  * A kind that takes a parameter (which smart-home group...) returns one [WidgetChoice] per value from
  * [choices] and names each in [label]; [content] gets the choice back, parameter included.
  */
@@ -30,17 +32,19 @@ class HomeWidgetKind(
     val choices: (Context) -> List<WidgetChoice> = { listOf(WidgetChoice(type)) },
     /** The name of a choice in the picker; the title unless the parameter needs naming. */
     val label: (Context, WidgetChoice) -> String = { context, _ -> context.getString(title) },
+    /** The page a double tap (or a double press of the knob) on the widget opens; null when it has none. */
+    val section: Section? = null,
     val content: @Composable (choice: WidgetChoice, settings: LauncherSettings, modifier: Modifier) -> Unit,
 )
 
 /** Every home widget, in the picker's order. A new kind is one more entry here and one [WidgetType]. */
 object HomeWidgets {
     val all: List<HomeWidgetKind> = listOf(
-        HomeWidgetKind(WidgetType.MUSIC, R.string.nav_music, CarIcons.Music) { _, _, modifier -> MusicWidget(modifier) },
-        HomeWidgetKind(WidgetType.NOTIFICATIONS, R.string.widget_notifications, CarIcons.Bell) { _, settings, modifier ->
+        HomeWidgetKind(WidgetType.MUSIC, R.string.nav_music, CarIcons.Music, section = Section.MUSIC) { _, _, modifier -> MusicWidget(modifier) },
+        HomeWidgetKind(WidgetType.NOTIFICATIONS, R.string.widget_notifications, CarIcons.Bell, section = Section.NOTIFICATIONS) { _, settings, modifier ->
             NotificationsWidget(settings, modifier)
         },
-        HomeWidgetKind(WidgetType.FAVORITES, R.string.widget_favorites, CarIcons.Star) { _, settings, modifier ->
+        HomeWidgetKind(WidgetType.FAVORITES, R.string.widget_favorites, CarIcons.Star, section = Section.PHONE) { _, settings, modifier ->
             FavoritesWidget(settings, modifier)
         },
         HomeWidgetKind(WidgetType.CLOCK, R.string.widget_clock, CarIcons.Clock) { _, settings, modifier -> ClockWidget(settings, modifier) },
@@ -52,10 +56,13 @@ object HomeWidgets {
             // Only with a weather app that has a widget: there is no weather of our own
             choices = { context -> if (WeatherWidgetHost.candidates(context).isEmpty()) emptyList() else listOf(WidgetChoice(WidgetType.WEATHER)) },
         ) { _, _, modifier -> WeatherWidget(modifier) },
-        HomeWidgetKind(WidgetType.MAP, R.string.widget_map, CarIcons.Map) { _, settings, modifier -> MapWidget(settings, modifier) },
+        // Look-only, no page: computed on the phone for where the car is
+        HomeWidgetKind(WidgetType.PRAYER, R.string.widget_prayer, CarIcons.Mosque) { _, settings, modifier -> PrayerWidget(settings, modifier) },
+        HomeWidgetKind(WidgetType.RADIO, R.string.widget_radio, CarIcons.Radio, section = Section.RADIO) { _, _, modifier -> RadioWidget(modifier) },
+        HomeWidgetKind(WidgetType.MAP, R.string.widget_map, CarIcons.Map, section = Section.MAP) { _, settings, modifier -> MapWidget(settings, modifier) },
         // One per group (an area of the devices chosen for the car) of every linked service; the slot keeps "provider/group"
         HomeWidgetKind(
-            WidgetType.SMART_HOME, R.string.widget_smart_home, CarIcons.SmartHome,
+            WidgetType.SMART_HOME, R.string.widget_smart_home, CarIcons.SmartHome, section = Section.SMART_HOME,
             choices = { context -> smartHomeGroups(context).map { WidgetChoice(WidgetType.SMART_HOME, groupKey(it)) } },
             label = { context, choice ->
                 smartHomeGroups(context).firstOrNull { groupKey(it) == choice.param }?.title ?: context.getString(R.string.widget_smart_home)

@@ -54,6 +54,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.car.VehicleSnapshot
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -109,7 +110,7 @@ fun StatusBar(settings: LauncherSettings, showLayoutButton: Boolean) {
                 Modifier
                     // The widgets are arranged freely: a tap or a hold opens the home's edit mode
                     .carClickable(CircleShape, layoutDescription, onLongClick = { HomeEdit.start(settings) }) { HomeEdit.start(settings) }
-                    .background(colors.surface, CircleShape)
+                    .glass(CircleShape)
                     .size(52.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -213,11 +214,11 @@ private fun MicButton() {
     Box(
         Modifier
             .carClickable(CircleShape, stringResource(if (active) R.string.voice_stop else R.string.voice_start)) { VoiceAssistant.toggle(context) }
-            .background(if (active) colors.album else colors.surface, CircleShape)
+            .glass(CircleShape) { if (active) it.accent else it.surface }
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarIcon(if (active) CarIcons.Close else CarIcons.Mic, if (active) colors.onAlbum else colors.text, Modifier.size(24.dp))
+        CarIcon(if (active) CarIcons.Close else CarIcons.Mic, if (active) colors.onAccent else colors.text, Modifier.size(24.dp))
     }
 }
 
@@ -231,7 +232,7 @@ private fun NotificationsButton(settings: LauncherSettings, open: Boolean) {
     Box(
         Modifier
             .carClickable(CircleShape, label) { if (open) settings.closeNotifications() else settings.setSection(Section.NOTIFICATIONS) }
-            .background(if (open) colors.focus.copy(alpha = 0.2f) else colors.surface, CircleShape)
+            .glass(CircleShape) { if (open) it.accent.copy(alpha = 0.22f) else it.surface }
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -240,11 +241,11 @@ private fun NotificationsButton(settings: LauncherSettings, open: Boolean) {
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
-                    .background(colors.focus, CircleShape)
+                    .background(colors.accent, CircleShape)
                     .padding(horizontal = 6.dp, vertical = 1.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                CarLabel(if (count > 9) "9+" else count.toString(), 13.sp, colors.bg, weight = FontWeight.Bold)
+                CarLabel(if (count > 9) "9+" else count.toString(), 13.sp, colors.onAccent, weight = FontWeight.Bold)
             }
         }
     }

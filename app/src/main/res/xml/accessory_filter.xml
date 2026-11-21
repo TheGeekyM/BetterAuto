@@ -4,4 +4,8 @@
     <usb-accessory
         manufacturer="Android"
         model="Android Auto" />
+    <!-- Google's Desktop Head Unit, to try the car screen on a computer -->
+    <usb-accessory
+        manufacturer="Android"
+        model="Android Open Automotive Protocol" />
 </resources>

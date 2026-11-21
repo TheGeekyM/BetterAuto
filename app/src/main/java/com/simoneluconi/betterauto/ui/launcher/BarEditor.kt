@@ -64,6 +64,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.FocusMemory
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.verticalScrollWithBar
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -138,8 +139,8 @@ fun BarEditorPanel(settings: LauncherSettings, maxHeight: Dp, modifier: Modifier
                 .widthIn(max = 1000.dp)
                 .heightIn(max = maxHeight)
                 .shadow(24.dp, shape)
+                .glass(shape) { it.glass }
                 .clip(shape)
-                .background(colors.surface)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .focusProperties { onExit = { if (requestedFocusDirection != FocusDirection.Enter) cancelFocusChange() } }
                 .focusGroup()
@@ -156,7 +157,7 @@ fun BarEditorPanel(settings: LauncherSettings, maxHeight: Dp, modifier: Modifier
             }
             CarLabel(stringResource(R.string.rail_settings_note), 17.sp, colors.text2)
             // Why the last place picked was refused (hiding the last way to the notifications)
-            refused?.let { CarLabel(stringResource(it), 17.sp, colors.focus, weight = FontWeight.Bold, maxLines = 2) }
+            refused?.let { CarLabel(stringResource(it), 17.sp, colors.accent, weight = FontWeight.Bold, maxLines = 2) }
             Column(Modifier.verticalScrollWithBar(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 for ((index, entry) in layout.withIndex()) {
                     // Keyed: a moved row takes the knob's focus along
@@ -199,7 +200,7 @@ private fun EditorRow(
                     .carClickable(chipShape, stringResource(R.string.settings_option, name, label)) {
                         onPlaced(setting.place(settings, entry.item, slot, SettingsSurface.CAR))
                     }
-                    .background(if (selected) colors.focus.copy(alpha = 0.22f) else colors.surface, chipShape)
+                    .background(if (selected) colors.accent.copy(alpha = 0.22f) else colors.surface, chipShape)
                     .height(52.dp)
                     .padding(horizontal = 20.dp),
                 contentAlignment = Alignment.Center,
@@ -248,12 +249,12 @@ private fun Pill(label: String, primary: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .carClickable(shape, label, onClick = onClick)
-            .background(if (primary) colors.focus else colors.surface2, shape)
+            .background(if (primary) colors.accent else colors.surface2, shape)
             .height(56.dp)
             .padding(horizontal = 28.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarLabel(label, 20.sp, if (primary) colors.bg else colors.text, weight = FontWeight.ExtraBold)
+        CarLabel(label, 20.sp, if (primary) colors.onAccent else colors.text, weight = FontWeight.ExtraBold)
     }
 }
 
@@ -263,7 +264,7 @@ internal fun MoveButton(icon: ImageVector, label: String, enabled: Boolean, rota
     Box(
         Modifier
             .carClickable(CircleShape, label) { if (enabled) onClick() }
-            .background(colors.surface, CircleShape)
+            .glass(CircleShape)
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {

@@ -82,6 +82,7 @@ import com.simoneluconi.betterauto.settings.WidgetType
 import com.simoneluconi.betterauto.ui.CarIcon
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.widgets.HomeWidgets
 
 /** Counts the app coming back to the front: permissions and bindings change in other screens. */
@@ -219,7 +220,7 @@ internal fun PhoneWidgetSlots(item: WidgetSlotsSetting, settings: LauncherSettin
                             .size(box.width.dp, box.height.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(colors.surface2)
-                            .then(if (moving == index) Modifier.border(3.dp, colors.focus, RoundedCornerShape(14.dp)) else Modifier)
+                            .then(if (moving == index) Modifier.border(3.dp, colors.accent, RoundedCornerShape(14.dp)) else Modifier)
                             .clickable { onOpenSlot(shape, index) }
                             .padding(6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -240,13 +241,13 @@ internal fun PhoneWidgetSlots(item: WidgetSlotsSetting, settings: LauncherSettin
                             .offset(box.x.dp, box.y.dp)
                             .size(box.width.dp, box.height.dp)
                             .background(
-                                if (drop is HomeDrop.Swap) colors.focus.copy(alpha = if (lit) 0.35f else 0.08f) else if (lit) colors.focus else colors.surface,
+                                if (drop is HomeDrop.Swap) colors.accent.copy(alpha = if (lit) 0.35f else 0.08f) else if (lit) colors.accent else colors.surface,
                                 shapeOf,
                             )
-                            .then(if (drop is HomeDrop.Swap) Modifier else Modifier.border(2.dp, colors.focus, shapeOf)),
+                            .then(if (drop is HomeDrop.Swap) Modifier else Modifier.border(2.dp, colors.accent, shapeOf)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (drop !is HomeDrop.Swap) CarIcon(CarIcons.Plus, if (lit) colors.bg else colors.focus, Modifier.size(16.dp))
+                        if (drop !is HomeDrop.Swap) CarIcon(CarIcons.Plus, if (lit) colors.onAccent else colors.accent, Modifier.size(16.dp))
                     }
                 }
                 if (moving == null) {
@@ -291,7 +292,7 @@ private fun PhoneChip(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) colors.focus.copy(alpha = 0.22f) else colors.surface2)
+            .background(if (selected) colors.accent.copy(alpha = 0.22f) else colors.surface2)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -370,8 +371,8 @@ internal fun PhoneWidgetPicker(item: WidgetSlotsSetting, settings: LauncherSetti
                     Box(
                         Modifier
                             .size(40.dp)
+                            .glass(CircleShape)
                             .clip(CircleShape)
-                            .background(colors.surface)
                             .clickable { save(pages - choice) },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -399,7 +400,7 @@ internal fun PhoneWidgetPicker(item: WidgetSlotsSetting, settings: LauncherSetti
                 ) {
                     HomeWidgets.kind(choice.type)?.let { CarIcon(it.icon, colors.text, Modifier.size(24.dp)) }
                     CarLabel(HomeWidgets.label(context, choice), 16.sp, colors.text, Modifier.weight(1f), maxLines = 2)
-                    CarIcon(CarIcons.Plus, colors.focus, Modifier.size(22.dp))
+                    CarIcon(CarIcons.Plus, colors.accent, Modifier.size(22.dp))
                 }
             }
         }
@@ -520,7 +521,7 @@ private fun StylePreview(info: android.appwidget.AppWidgetProviderInfo, selected
             .width(150.dp)
             .clip(shape)
             .background(colors.surface2)
-            .border(2.dp, if (selected) colors.focus else colors.line, shape)
+            .border(2.dp, if (selected) colors.accent else colors.line, shape)
             .clickable(onClick = onClick)
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),

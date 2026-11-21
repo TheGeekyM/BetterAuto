@@ -42,6 +42,7 @@ import com.simoneluconi.betterauto.car.CarState
 import com.simoneluconi.betterauto.map.nav.Destination
 import com.simoneluconi.betterauto.map.nav.Maneuver
 import com.simoneluconi.betterauto.map.nav.ManeuverKind
+import com.simoneluconi.betterauto.map.nav.NavRoute
 import com.simoneluconi.betterauto.map.nav.NavState
 import com.simoneluconi.betterauto.map.nav.RoutePlanning
 import com.simoneluconi.betterauto.settings.LauncherSettings
@@ -52,6 +53,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.LocalFormatLocale
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.theme.SignWhite
 import com.simoneluconi.betterauto.ui.vehicle.rememberUnits
 import java.time.LocalTime
@@ -73,8 +75,8 @@ fun ManeuverCard(nav: NavState, modifier: Modifier = Modifier, onEnd: (() -> Uni
             // As wide as its widest line, so the hairline spans the card
             .width(IntrinsicSize.Max)
             .shadow(8.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface),
+            .glass(RoundedCornerShape(24.dp)) { it.glass }
+            .clip(RoundedCornerShape(24.dp)),
     ) {
         Row(
             Modifier.padding(16.dp),
@@ -82,7 +84,8 @@ fun ManeuverCard(nav: NavState, modifier: Modifier = Modifier, onEnd: (() -> Uni
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Box(
-                Modifier.size(76.dp).clip(RoundedCornerShape(18.dp)).background(colors.focus),
+                // The route's blue, as the line on the map it points along
+                Modifier.size(76.dp).clip(RoundedCornerShape(18.dp)).background(colors.map.route),
                 contentAlignment = Alignment.Center,
             ) {
                 val kind = next?.kind ?: ManeuverKind.ARRIVE
@@ -155,8 +158,8 @@ fun PlanningCard(planning: RoutePlanning, places: List<Destination>, onRetry: ()
         modifier
             .widthIn(max = 460.dp)
             .shadow(8.dp, RoundedCornerShape(24.dp))
+            .glass(RoundedCornerShape(24.dp)) { it.glass }
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -207,11 +210,11 @@ private fun EndButton(onEnd: () -> Unit) {
             .widthIn(min = 40.dp)
             .carClickable(RoundedCornerShape(50), label) { if (asking) onEnd() else asking = true }
             .clip(RoundedCornerShape(50))
-            .background(if (asking) colors.focus else colors.surface2)
+            .background(if (asking) colors.accent else colors.surface2)
             .padding(horizontal = if (asking) 16.dp else 0.dp),
         contentAlignment = Alignment.Center,
     ) {
-        if (asking) CarLabel(label, 17.sp, colors.bg, weight = FontWeight.Bold, maxLines = 1)
+        if (asking) CarLabel(label, 17.sp, colors.onAccent, weight = FontWeight.Bold, maxLines = 1)
         else CarIcon(CarIcons.Close, colors.text, Modifier.size(20.dp))
     }
 }
@@ -278,4 +281,52 @@ private fun durationText(seconds: Double): String {
     val minutes = (seconds / 60).roundToInt().coerceAtLeast(1)
     return if (minutes < 60) stringResource(R.string.nav_duration_min, minutes)
     else stringResource(R.string.nav_duration_hours, minutes / 60, minutes % 60)
+}
+
+/**
+ * The other routes found when a trip starts, under the maneuver card for a while: each with the time it adds and
+ * the roads it takes; a tap (or the knob) takes it, "Keep" closes the card. Google's pick is already followed.
+ */
+@Composable
+fun RouteChoiceCard(current: NavRoute, others: List<NavRoute>, onChoose: (NavRoute) -> Unit, onKeep: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = LocalCarColors.current
+    val units = rememberUnits()
+    Column(
+        modifier
+            .widthIn(max = 460.dp)
+            .shadow(8.dp, RoundedCornerShape(24.dp))
+            .glass(RoundedCornerShape(24.dp)) { it.glass }
+            .clip(RoundedCornerShape(24.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CarLabel(stringResource(R.string.nav_other_routes), 18.sp, colors.text2, weight = FontWeight.Bold)
+        for (route in others) {
+            val extra = ((route.durationS - current.durationS) / 60).roundToInt()
+            val time = if (extra > 0) stringResource(R.string.nav_route_slower, extra) else stringResource(R.string.nav_route_same)
+            val roads = listOfNotNull(route.description, distanceText(route.lengthM, units)).joinToString(" · ")
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .carClickable(RoundedCornerShape(18.dp), "$time, $roads") { onChoose(route) }
+                    .background(colors.surface2, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                CarLabel(time, 22.sp, colors.text, weight = FontWeight.ExtraBold, tabularNumbers = true)
+                CarLabel(roads, 17.sp, colors.text2, maxLines = 1, shrinkToFit = true)
+            }
+        }
+        val keep = stringResource(R.string.nav_route_keep, current.description ?: durationText(current.durationS))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .carClickable(RoundedCornerShape(50), keep, onClick = onKeep)
+                .background(colors.accent, RoundedCornerShape(50))
+                .height(52.dp)
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CarLabel(keep, 19.sp, colors.onAccent, weight = FontWeight.Bold, maxLines = 1, shrinkToFit = true)
+        }
+    }
 }

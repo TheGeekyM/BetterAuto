@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -58,7 +59,9 @@ import com.simoneluconi.betterauto.ui.CarIcon
 import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
+import com.simoneluconi.betterauto.ui.phone.CallGreen
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.voice.VoiceAssistant
 import com.simoneluconi.betterauto.voice.VoiceState
 
@@ -73,24 +76,28 @@ fun VoiceOverlay(modifier: Modifier = Modifier) {
     // Kept while the panel slides away
     val shown = remember { Last() }
     if (state !is VoiceState.Idle) shown.value = state
+    // Listening and the spoken reply show only the ring (VoiceScrim); the panel is for choices, calls and searches
+    val panel = state !is VoiceState.Idle && state !is VoiceState.Listening && state !is VoiceState.Done
     AnimatedVisibility(
-        visible = state !is VoiceState.Idle,
+        visible = panel,
         modifier = modifier,
         enter = slideInVertically { it } + fadeIn(),
         exit = slideOutVertically { it } + fadeOut(),
     ) {
         val current = shown.value ?: return@AnimatedVisibility
         val colors = LocalCarColors.current
-        val shape = RoundedCornerShape(32.dp)
+        val pill = current is VoiceState.Listening
+        val shape = RoundedCornerShape(if (pill) 50 else 26)
         Column(
             Modifier
-                .widthIn(min = 640.dp, max = 980.dp)
-                .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .widthIn(min = if (pill) 380.dp else 480.dp, max = if (pill) 620.dp else 760.dp)
+                .shadow(20.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                // Floating glass like every pill; while listening its edge takes a little of the ring's light
+                .glass(shape) { it.glass }
+                .then(if (pill) Modifier.border(1.dp, VoiceRingEdge, shape) else Modifier)
                 .clip(shape)
-                .background(colors.surface)
-                .border(1.dp, colors.line, shape)
-                .padding(horizontal = 28.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = if (pill) 20.dp else 22.dp, vertical = if (pill) 10.dp else 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             when (current) {
                 is VoiceState.Listening -> Listening(current)
@@ -111,14 +118,32 @@ private class Last { var value: VoiceState? = null }
 @Composable
 fun VoiceScrim(modifier: Modifier = Modifier) {
     val state by VoiceAssistant.state.collectAsStateWithLifecycle()
-    val waiting = state is VoiceState.Listening || state is VoiceState.Choosing || state is VoiceState.Calling || state is VoiceState.Searching
+    val waiting = state is VoiceState.Listening || state is VoiceState.Choosing || state is VoiceState.Calling ||
+        state is VoiceState.Searching || state is VoiceState.Done
+    val listening = state as? VoiceState.Listening
+    // Speaking = the reply on show (it lasts about as long as the reply is spoken)
+    // ponytail: Done's show time stands for the speech; follow CarVoice/ClipPlayer's real end if they drift apart
+    val speaking = state is VoiceState.Done
+    val talk by rememberInfiniteTransition(label = "talk").animateFloat(
+        0.25f, 0.75f, infiniteRepeatable(tween(420), RepeatMode.Reverse), label = "talkLevel",
+    )
     AnimatedVisibility(visible = waiting, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.25f))
+                // Darker while listening: the ring of light shows on it
+                .background(Color.Black.copy(alpha = if (listening != null || speaking) 0.85f else 0.25f))
                 .pointerInput(Unit) { detectTapGestures { VoiceAssistant.cancel() } }
-        )
+        ) {
+            // Only the ring while listening and speaking: blue while it listens, green while it talks
+            AnimatedVisibility(listening != null || speaking, enter = fadeIn(), exit = fadeOut()) {
+                VoiceRing(
+                    if (speaking) talk else listening?.level ?: 0f,
+                    Modifier.fillMaxSize().padding(vertical = 8.dp),
+                    color = if (speaking) VoiceRingSpeaking else VoiceRingListening,
+                )
+            }
+        }
     }
 }
 
@@ -127,21 +152,34 @@ private fun Listening(state: VoiceState.Listening) {
     val colors = LocalCarColors.current
     val cancel = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { cancel.requestFocus() } }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        Microphone(state.level)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Where it listens from, as an icon: the car or the phone
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CarLabel(stringResource(R.string.voice_listening), 19.sp, colors.text2, weight = FontWeight.Bold)
-                CarIcon(if (state.carMicrophone) CarIcons.Car else CarIcons.Phone, colors.text2, Modifier.size(20.dp))
-            }
-            if (state.text.isBlank()) {
-                CarLabel(state.hint, 24.sp, colors.text2, maxLines = 2)
-            } else {
-                CarLabel(state.text, 34.sp, colors.text, weight = FontWeight.ExtraBold, maxLines = 2, lineHeight = 40.sp)
-            }
+    // The ring above is the microphone: here only where it listens from, the words, and a small ×
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        CarIcon(if (state.carMicrophone) CarIcons.Car else CarIcons.Phone, colors.text2, Modifier.size(20.dp))
+        // Whether this command may go online (Gemini and Claude) or stays on the phone
+        val online by VoiceAssistant.online.collectAsState()
+        CarIcon(if (online) CarIcons.Cloud else CarIcons.CloudOff, colors.text2, Modifier.size(18.dp))
+        if (state.text.isBlank()) {
+            CarLabel(state.hint, 19.sp, colors.text2, maxLines = 1, modifier = Modifier.weight(1f))
+        } else {
+            CarLabel(state.text, 23.sp, colors.text, weight = FontWeight.Bold, maxLines = 2, lineHeight = 28.sp, modifier = Modifier.weight(1f))
         }
-        CancelButton(cancel)
+        CloseButton(cancel)
+    }
+}
+
+/** The listening pill's Cancel: a small round ×, under the knob like [CancelButton]. */
+@Composable
+private fun CloseButton(focus: FocusRequester) {
+    val colors = LocalCarColors.current
+    Box(
+        Modifier
+            .size(44.dp)
+            .focusRequester(focus)
+            .carClickable(CircleShape, stringResource(R.string.voice_call_cancel)) { VoiceAssistant.cancel() }
+            .glass(CircleShape) { it.surface2 },
+        contentAlignment = Alignment.Center,
+    ) {
+        CarIcon(CarIcons.Close, colors.text, Modifier.size(22.dp))
     }
 }
 
@@ -159,22 +197,6 @@ private fun CancelButton(focus: FocusRequester) {
         contentAlignment = Alignment.Center,
     ) {
         CarLabel(stringResource(R.string.voice_call_cancel), 22.sp, colors.text, weight = FontWeight.Bold)
-    }
-}
-
-/** The microphone in the album color, with a ring that grows with the voice and a slow breath when quiet. */
-@Composable
-private fun Microphone(level: Float) {
-    val colors = LocalCarColors.current
-    val voice by animateFloatAsState(level, spring(stiffness = 400f), label = "voiceLevel")
-    val breath by rememberInfiniteTransition(label = "breath").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "breathValue",
-    )
-    Box(Modifier.size(108.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(108.dp).scale(0.78f + 0.22f * maxOf(voice, breath * 0.35f)).background(colors.album.copy(alpha = 0.22f), CircleShape))
-        Box(Modifier.size(76.dp).background(colors.album, CircleShape), contentAlignment = Alignment.Center) {
-            CarIcon(CarIcons.Mic, colors.onAlbum, Modifier.size(36.dp))
-        }
     }
 }
 
@@ -224,13 +246,13 @@ private fun Calling(state: VoiceState.Calling) {
         progress.animateTo(0f, tween(total.toInt(), easing = LinearEasing))
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-        Box(Modifier.size(64.dp).background(Color(0xFF2E9E5B), CircleShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(64.dp).background(CallGreen, CircleShape), contentAlignment = Alignment.Center) {
             CarIcon(CarIcons.CallAnswer, Color.White, Modifier.size(30.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CarLabel(stringResource(R.string.voice_calling, state.name, state.numberLabel), 28.sp, colors.text, weight = FontWeight.ExtraBold, maxLines = 2)
             Box(Modifier.fillMaxWidth().height(6.dp).background(colors.surface2, RoundedCornerShape(3.dp))) {
-                Box(Modifier.fillMaxWidth(progress.value).height(6.dp).background(Color(0xFF2E9E5B), RoundedCornerShape(3.dp)))
+                Box(Modifier.fillMaxWidth(progress.value).height(6.dp).background(CallGreen, RoundedCornerShape(3.dp)))
             }
         }
         CancelButton(cancel)
@@ -260,10 +282,10 @@ private fun Done(state: VoiceState.Done) {
     val colors = LocalCarColors.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         Box(
-            Modifier.size(64.dp).background(if (state.understood) colors.album else colors.surface2, CircleShape),
+            Modifier.size(64.dp).background(if (state.understood) colors.accent else colors.surface2, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            CarIcon(if (state.understood) CarIcons.Check2 else CarIcons.Close, if (state.understood) colors.onAlbum else colors.text2, Modifier.size(30.dp))
+            CarIcon(if (state.understood) CarIcons.Check2 else CarIcons.Close, if (state.understood) colors.onAccent else colors.text2, Modifier.size(30.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (state.heard.isNotBlank() && state.understood) CarLabel("“${state.heard}”", 19.sp, colors.text2, maxLines = 1)

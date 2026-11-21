@@ -195,6 +195,45 @@ data class HomeArrangement(val rows: Boolean, val lines: List<HomeLine>) {
         return updated
     }
 
+    /**
+     * The main place: the one with the biggest share of the screen (its line's share times its share of the line),
+     * the first of them when several are as big. The gaps between places are left out: they never change which
+     * one is biggest by more than a hair, and a tie within [SAME_SIZE] counts as one.
+     */
+    fun mainPlace(): Int {
+        val lineSum = lines.sumOf { it.weight.toDouble() }.takeIf { it > 0.0 } ?: 1.0
+        var best = 0
+        var bestShare = -1.0
+        var index = 0
+        for (line in lines) {
+            val placeSum = line.places.sumOf { it.weight.toDouble() }.takeIf { it > 0.0 } ?: 1.0
+            for (place in line.places) {
+                val share = line.weight / lineSum * (place.weight / placeSum)
+                if (share > bestShare + SAME_SIZE) {
+                    best = index
+                    bestShare = share
+                }
+                index++
+            }
+        }
+        return best
+    }
+
+    /**
+     * What the driver's tap on a widget does: place [index] of [shown] (this arrangement as the screen fits it,
+     * [fit]) goes into the main place there ([mainPlace]), what that held into the tapped one; the sizes stay.
+     * Places are found again here by the widget they show first, so it works on a screen that put some a swipe
+     * away. The same instance when the tapped place already is the main one.
+     */
+    fun promoted(index: Int, shown: HomeArrangement = this): HomeArrangement {
+        val main = shown.mainPlace()
+        if (index == main) return this
+        val from = mains.indexOf(shown.place(index)?.main ?: return this)
+        val to = mains.indexOf(shown.place(main)?.main ?: return this)
+        if (from < 0 || to < 0 || from == to) return this
+        return move(from, HomeDrop.Swap(to))
+    }
+
     /** Place [index] holds [pages] in this order; they leave the others' swipe-away pages. Never empty. */
     fun withPages(index: Int, pages: List<WidgetChoice>): HomeArrangement {
         val list = pages.distinct()
@@ -286,6 +325,9 @@ data class HomeArrangement(val rows: Boolean, val lines: List<HomeLine>) {
 
         /** The smallest share of two neighbours: beyond it a widget gets too thin to show anything. */
         const val MIN_SHARE = 0.2f
+
+        /** Two places' shares of the screen closer than this are the same size ([mainPlace]). */
+        private const val SAME_SIZE = 0.005
 
         /**
          * Out of the box: music big, then the time (with the outside temperature) and the notifications, nothing to

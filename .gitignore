@@ -24,3 +24,8 @@
 /app/src/main/assets/*.pfx
 !/app/src/main/assets/phone_cert.pem
 !/app/src/main/assets/phone_key.pem
+
+# Spoken greetings say the driver's name: personal, never committed (the voice starts without one)
+app/src/main/assets/voice/*/*/greet*.ogg
+# Personal takes of any clip (the plain one with the driver's name: "<key>.p1.ogg"), and time-of-day greetings
+app/src/main/assets/voice/*/*/*.p[0-9]*.ogg

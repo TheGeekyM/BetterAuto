@@ -17,7 +17,10 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -35,6 +38,9 @@ data class LibraryItem(
     val glyph: Boolean = false,
 )
 
+/** A folder of the library's root with its first items, for the music home; [folder] null for loose tracks at the root. */
+data class LibrarySection(val folder: LibraryItem?, val items: List<LibraryItem>, val more: Boolean)
+
 sealed interface LibraryState {
     data object Connecting : LibraryState
 
@@ -50,6 +56,16 @@ private const val ICON_PX = 128
 /** Folders are fetched in one page; apps that page by themselves slice at this size. */
 private const val PAGE_SIZE = 2000
 
+/** The home's previews: a few folders of the root, a few items each, their art big enough for cards. */
+private const val PREVIEW_SECTIONS = 6
+private const val PREVIEW_ITEMS = 8
+private const val PREVIEW_PX = 224
+private const val PREVIEW_ROOT = 24
+
+/** Covers for the previews are fetched a few at a time: some come from the web. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val artDispatcher = Dispatchers.IO.limitedParallelism(4)
+
 /**
  * Browses a music app's library through its media browser service (Media3 or the older kind), like
  * Android Auto does. Many apps only accept the callers they trust, so [LibraryState.Unavailable] is a
@@ -59,6 +75,11 @@ private const val PAGE_SIZE = 2000
 class MediaLibrary(private val context: Context, private val packageName: String) {
     private val _state = MutableStateFlow<LibraryState>(LibraryState.Connecting)
     val state: StateFlow<LibraryState> = _state
+
+    private val _sections = MutableStateFlow<List<LibrarySection>?>(null)
+
+    /** The root's folders with their first items (the music home's rows); null while loading, empty without a library. */
+    val sections: StateFlow<List<LibrarySection>?> = _sections
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
@@ -77,6 +98,7 @@ class MediaLibrary(private val context: Context, private val packageName: String
             .firstOrNull()?.serviceInfo
         if (service == null) {
             _state.value = LibraryState.Unavailable
+            _sections.value = emptyList()
             return
         }
         val token = SessionToken(context, ComponentName(service.packageName, service.name))
@@ -86,14 +108,23 @@ class MediaLibrary(private val context: Context, private val packageName: String
             val b = runCatching { future.get() }.getOrNull()
             if (b == null || closed) {
                 b?.release()
-                if (!closed) _state.value = LibraryState.Unavailable
+                if (!closed) {
+                    _state.value = LibraryState.Unavailable
+                    _sections.value = emptyList()
+                }
                 return@addListener
             }
             browser = b
             val rootFuture = b.getLibraryRoot(null)
             rootFuture.addListener({
                 val root = runCatching { rootFuture.get() }.getOrNull()?.value?.mediaId
-                if (root == null) _state.value = LibraryState.Unavailable else open(root, null)
+                if (root == null) {
+                    _state.value = LibraryState.Unavailable
+                    _sections.value = emptyList()
+                } else {
+                    open(root, null)
+                    loadSections(root)
+                }
             }, context.mainExecutor)
         }, context.mainExecutor)
     }
@@ -107,6 +138,15 @@ class MediaLibrary(private val context: Context, private val packageName: String
                 b.play()
             }
         }
+    }
+
+    /** Opens [folder] (from the home) as if picked at the root: back goes to the root, wherever the library was. */
+    fun openFromRoot(folder: LibraryItem) {
+        if (browser == null || path.isEmpty()) return
+        val root = path.first()
+        path.clear()
+        path.add(root)
+        open(folder.id, folder.title)
     }
 
     /** One folder up; false at the root. */
@@ -163,6 +203,75 @@ class MediaLibrary(private val context: Context, private val packageName: String
                 loadIcons(current, children)
             }
         }, context.mainExecutor)
+    }
+
+    /**
+     * The home's rows: loose tracks at the root, then the first folders with their first items, fetched side by side
+     * without touching the browsing ([path], [state]). The words come first; the covers follow a section at a time
+     * (web ones are downloaded: a slow one must not hold the rows back), only the previews' bigger.
+     */
+    private fun loadSections(root: String) {
+        scope.launch {
+            val top = children(root, PREVIEW_ROOT)
+            if (top == null) {
+                _sections.value = emptyList()
+                return@launch
+            }
+            val loose = top.first.filter { it.mediaMetadata.isBrowsable != true && it.mediaMetadata.isPlayable == true }
+            val folders = top.first.filter { it.mediaMetadata.isBrowsable == true }.take(PREVIEW_SECTIONS)
+            val raw = buildList {
+                if (loose.isNotEmpty()) add(null to (loose.take(PREVIEW_ITEMS) to (loose.size > PREVIEW_ITEMS)))
+                addAll(folders.map { folder -> async { children(folder.mediaId, PREVIEW_ITEMS)?.let { plain(folder) to it } } }.awaitAll().filterNotNull())
+            }.filter { it.second.first.isNotEmpty() }
+            if (closed) return@launch
+            _sections.value = raw.map { (folder, items) -> LibrarySection(folder, items.first.map(::plain), items.second) }
+            raw.forEachIndexed { index, (_, items) ->
+                launch {
+                    val covers = items.first.map { item ->
+                        async(artDispatcher) {
+                            val m = item.mediaMetadata
+                            Artwork.decode(context, m.artworkData, m.artworkUri, PREVIEW_PX)?.let { it to isGlyph(it) }
+                        }
+                    }.awaitAll()
+                    val now = _sections.value ?: return@launch
+                    if (closed || index >= now.size) return@launch
+                    // On the main thread between suspensions: no other section's update can slip in between read and write
+                    _sections.value = now.toMutableList().also { list ->
+                        val section = list[index]
+                        list[index] = section.copy(items = section.items.mapIndexed { i, it ->
+                            val cover = covers.getOrNull(i)
+                            if (cover == null || it.icon != null) it else it.copy(icon = cover.first.asImageBitmap(), glyph = cover.second)
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    /** A folder's first [limit] items, and whether it holds more; null on refusal. Never touches the browsing. */
+    private suspend fun children(id: String, limit: Int): Pair<List<MediaItem>, Boolean>? {
+        val b = browser ?: return null
+        // One more than shown, to know whether a "more" card is needed; some apps ignore the page size and send all
+        val future = b.getChildren(id, 0, limit + 1, null)
+        val result = suspendCancellableCoroutine { cont ->
+            future.addListener({ cont.resumeWith(Result.success(runCatching { future.get() }.getOrNull())) }, context.mainExecutor)
+        }
+        if (result == null || result.resultCode != LibraryResult.RESULT_SUCCESS) return null
+        val all = result.value.orEmpty()
+        return all.take(limit) to (all.size > limit)
+    }
+
+    /** An item without its picture yet. */
+    private fun plain(item: MediaItem): LibraryItem {
+        val m = item.mediaMetadata
+        return LibraryItem(
+            id = item.mediaId,
+            title = m.title?.toString().orEmpty(),
+            subtitle = (m.subtitle ?: m.artist)?.toString().orEmpty(),
+            icon = null,
+            browsable = m.isBrowsable == true,
+            playable = m.isPlayable == true,
+        )
     }
 
     /** A glyph has plenty of transparent pixels and all opaque ones of about the same color. */

@@ -61,6 +61,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /**
  * The map's overlays that wait for the driver (the destinations panel, the stop-or-destination choice), for the
@@ -246,14 +247,14 @@ private fun TripRow(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(if (picked) colors.focus.copy(alpha = 0.18f) else colors.surface2)
+            .background(if (picked) colors.accent.copy(alpha = 0.18f) else colors.surface2)
             .padding(if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(spacing),
     ) {
         // The stop's number, or the flag of the destination
-        Box(Modifier.size(badge).clip(CircleShape).background(if (last) colors.focus else colors.surface), contentAlignment = Alignment.Center) {
-            if (last) CarIcon(CarIcons.Arrive, colors.bg, Modifier.size(badge * 0.55f))
+        Box(Modifier.size(badge).clip(CircleShape).background(if (last) colors.accent else colors.surface), contentAlignment = Alignment.Center) {
+            if (last) CarIcon(CarIcons.Arrive, colors.onAccent, Modifier.size(badge * 0.55f))
             else CarLabel((index + 1).toString(), if (compact) 16.sp else 18.sp, colors.text, weight = FontWeight.ExtraBold)
         }
         Column(Modifier.weight(1f)) {
@@ -272,7 +273,7 @@ private fun TripRow(
                     .then(if (first != null) Modifier.focusRequester(first) else Modifier)
                     // By the place, not the row's index: the trip may have changed since it was drawn
                     .carClickable(CircleShape, stringResource(R.string.nav_remove, place.name)) { Trip.remove(place) }
-                    .background(colors.surface, CircleShape)
+                    .glass(CircleShape)
                     .size(size),
                 contentAlignment = Alignment.Center,
             ) {
@@ -306,7 +307,7 @@ private fun TripRow(
                     .carClickable(CircleShape, stringResource(R.string.nav_move, place.name)) {
                         if (picked) pick.drop() else pick.pick(place, places)
                     }
-                    .background(if (picked) colors.focus else colors.surface, CircleShape)
+                    .background(if (picked) colors.accent else colors.surface, CircleShape)
                     .size(52.dp)
             } else {
                 Modifier.size(32.dp, 52.dp)
@@ -314,7 +315,7 @@ private fun TripRow(
             Box(drag.then(handle), contentAlignment = Alignment.Center) {
                 CarIcon(
                     if (picked) CarIcons.MoveVertical else CarIcons.DragHandle,
-                    if (picked) colors.bg else colors.text2,
+                    if (picked) colors.onAccent else colors.text2,
                     Modifier.size(if (compact) 24.dp else 26.dp),
                 )
             }
@@ -359,8 +360,8 @@ fun TripChoice(
                 .padding(18.dp)
                 .widthIn(max = 560.dp)
                 .shadow(10.dp, RoundedCornerShape(28.dp))
+                .glass(RoundedCornerShape(28.dp)) { it.glass }
                 .clip(RoundedCornerShape(28.dp))
-                .background(colors.surface)
                 // Taps on the card stay on the card
                 .pointerInput(Unit) { detectTapGestures { } }
                 .then(if (knob) Modifier.navOverlay(first, onCancel) else Modifier)
@@ -395,12 +396,12 @@ private fun ChoicePill(label: String, primary: Boolean, knob: Boolean, modifier:
             .onFocusChanged { focused = it.isFocused }
             // Before the background: the focus ring is drawn just outside the pill
             .carClickable(shape, label, onClick = onClick)
-            .background(if (filled) colors.focus else colors.surface2, shape)
+            .background(if (filled) colors.accent else colors.surface2, shape)
             .height(56.dp)
             .padding(horizontal = 28.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarLabel(label, 20.sp, if (filled) colors.bg else colors.text, weight = FontWeight.ExtraBold)
+        CarLabel(label, 20.sp, if (filled) colors.onAccent else colors.text, weight = FontWeight.ExtraBold)
     }
 }
 

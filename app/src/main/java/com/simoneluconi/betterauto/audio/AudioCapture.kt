@@ -21,14 +21,22 @@ import kotlin.math.max
  * quantize to the car's bit depth ourselves with TPDF dither instead of plain rounding.
  * If the phone refuses float capture we fall back to Android's own 16-bit conversion.
  *
- * Only media/game/unknown usages are capturable, and apps may opt out (Android rules).
+ * Only media/game/unknown usages are capturable, and apps may opt out (Android rules). Our own sounds never
+ * are: [voice] mixes them in ([CarVoice]).
  */
 @SuppressLint("MissingPermission") // RECORD_AUDIO is requested before capture consent
-class AudioCapture(projection: MediaProjection, private val sink: AudioSink, usages: IntArray) {
+class AudioCapture(
+    projection: MediaProjection,
+    private val sink: AudioSink,
+    usages: IntArray,
+    private val voice: VoiceQueue? = null,
+) {
     private val format = sink.format
     private val chunkFrames = format.sampleRate / CHUNKS_PER_SECOND
     private val record: AudioRecord
-    private val floatCapture: Boolean
+
+    /** Captures the float mix; only then is [voice] laid over it (ponytail: not on the rare 16-bit fallback). */
+    val floatCapture: Boolean
 
     @Volatile
     private var running = false
@@ -93,7 +101,7 @@ class AudioCapture(projection: MediaProjection, private val sink: AudioSink, usa
         while (running) {
             val n = record.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
             if (n <= 0) continue
-            quantizer.deliver(sink, samples, n, SystemClock.elapsedRealtimeNanos() / 1000)
+            quantizer.deliver(sink, samples, n, SystemClock.elapsedRealtimeNanos() / 1000, voice)
         }
     }
 

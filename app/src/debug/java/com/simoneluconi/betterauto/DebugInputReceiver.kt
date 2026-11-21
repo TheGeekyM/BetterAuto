@@ -37,6 +37,8 @@ import com.simoneluconi.betterauto.settings.ScreenShape
 import com.simoneluconi.betterauto.settings.WidgetChoice
 import com.simoneluconi.betterauto.settings.LauncherSettings
 import com.simoneluconi.betterauto.settings.MicSource
+import com.simoneluconi.betterauto.voice.ClipPlayer
+import com.simoneluconi.betterauto.voice.Speech
 import com.simoneluconi.betterauto.voice.VoiceAssistant
 import com.simoneluconi.betterauto.voice.VoiceState
 import com.simoneluconi.betterauto.settings.RailLayout
@@ -117,6 +119,8 @@ import kotlin.concurrent.thread
  *                            "panel" reopens the panel, "real" goes back to the real position. Also works
  *                            without a car session. Each check is logged ("Smart home: <id> 812 m, outside,
  *                            next check in 20 s", "entered ... at 380 m", "left ...")
+ *   ... --es voiceClips m300,right               the recorded voice (Settings > Voice), clips joined as the guidance does
+ *   ... --es voiceReply "…"                      a reply as the assistant says it (recorded when one matches the text)
  *   ... --es navPrompt "In 300 metres, turn right"  speak it like a navigation app (navigation guidance usage):
  *                            with Shizuku it goes to the car's guidance stream, otherwise the phone speaks it and
  *                            the music in the car is lowered meanwhile
@@ -250,6 +254,13 @@ class DebugInputReceiver : BroadcastReceiver() {
             "preview_off" -> VoiceAssistant.preview(VoiceState.Idle)
         }
         intent.getStringExtra("navPrompt")?.let { FakeNavPrompt.speak(context, it) }
+        // The recorded voice, as the guidance and the assistant use it: clips joined, or a reply by its text
+        intent.getStringExtra("voiceClips")?.let { list ->
+            val played = ClipPlayer(context.applicationContext, android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .play(list.split(',').map { it.trim() })
+            EventLog.log("Debug: voice clips $list ${if (played) "playing" else "not recorded, the phone's voice would speak"}")
+        }
+        intent.getStringExtra("voiceReply")?.let { Speech.say(context, it) }
         if (intent.hasExtra("videoConfig")) {
             VideoChannel.forcedConfig = intent.getIntExtra("videoConfig", -1).takeIf { it >= 0 }
             EventLog.log("Debug: video configuration from the next session: ${VideoChannel.forcedConfig ?: "the car's choice"}")

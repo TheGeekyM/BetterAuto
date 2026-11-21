@@ -66,6 +66,7 @@ import com.simoneluconi.betterauto.ui.map.distanceText
 import com.simoneluconi.betterauto.ui.smarthome.PhoneTextField
 import com.simoneluconi.betterauto.ui.theme.CarTheme
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.vehicle.rememberUnits
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -113,7 +114,7 @@ class DestinationActivity : ComponentActivity() {
 
     private fun showSearch() {
         setContent {
-            CarTheme(night = isSystemInDarkTheme(), album = null) {
+            CarTheme(night = isSystemInDarkTheme()) {
                 var query by remember(prefill) { mutableStateOf(prefill) }
                 BackHandler(enabled = choosing != null) { choosing = null }
                 Box {
@@ -261,7 +262,7 @@ private fun TripPage(query: String, onQuery: (String) -> Unit, onBack: () -> Uni
         }
         PhoneTextField(query, onQuery, stringResource(R.string.nav_search_hint), keyboard = KeyboardType.Text)
         val shown = results
-        // The places found are OpenStreetMap's, through Photon: credited as the licence asks
+        // The places found are the phone geocoder's and OpenStreetMap's (through Photon): credited as the licence asks
         if (shown != null) CarLabel(stringResource(R.string.nav_search_attribution), 12.sp, colors.text2, maxLines = 1)
         when {
             searching && shown == null -> CarLabel(stringResource(R.string.nav_searching), 16.sp, colors.text2)
@@ -286,7 +287,7 @@ private fun TripPage(query: String, onQuery: (String) -> Unit, onBack: () -> Uni
 private fun TripCard(places: List<Destination>) {
     val colors = LocalCarColors.current
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(colors.surface).padding(14.dp),
+        Modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         CarLabel(stringResource(R.string.nav_trip), 21.sp, colors.text, weight = FontWeight.Bold)
@@ -318,8 +319,8 @@ private fun PlaceList(places: List<Pair<Destination, Double?>>, onChoose: (Desti
                 Modifier
                     .fillMaxWidth()
                     .carClickable(RoundedCornerShape(20.dp), place.name) { onChoose(place) }
+                    .glass(RoundedCornerShape(20.dp))
                     .clip(RoundedCornerShape(20.dp))
-                    .background(colors.surface)
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),

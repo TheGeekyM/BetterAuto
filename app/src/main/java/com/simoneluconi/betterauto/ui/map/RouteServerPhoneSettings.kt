@@ -71,7 +71,7 @@ fun RouteServerPhoneSettings() {
             is ServerCheck.NoAnswer -> {
                 CarLabel(stringResource(R.string.route_server_no_answer), 14.sp, colors.text, maxLines = 3)
                 CarLabel(
-                    stringResource(R.string.route_server_use_anyway), 15.sp, colors.focus,
+                    stringResource(R.string.route_server_use_anyway), 15.sp, colors.accent,
                     Modifier.clickable { use(c.base); check = null }.padding(vertical = 4.dp), weight = FontWeight.Bold,
                 )
             }

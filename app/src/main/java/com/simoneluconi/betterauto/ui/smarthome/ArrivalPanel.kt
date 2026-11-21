@@ -64,6 +64,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -158,9 +159,8 @@ fun ArrivalPanel(modifier: Modifier = Modifier) {
             Modifier
                 .widthIn(min = 600.dp, max = 1000.dp)
                 .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .glass(shape) { it.glass }
                 .clip(shape)
-                .background(colors.surface)
-                .border(1.dp, colors.line, shape)
                 // A tap on the panel itself is not a tap outside
                 .pointerInput(Unit) { detectTapGestures { } }
                 .focusProperties { onExit = { if (requestedFocusDirection != FocusDirection.Enter) cancelFocusChange() } }
@@ -252,7 +252,7 @@ fun ArrivalStatusButton() {
     Box(
         Modifier
             .carClickable(CircleShape, stringResource(R.string.smarthome_arrival_reopen, place.name)) { SmartHome.arrival?.openPanel() }
-            .background(if (arrival.panelOpen) colors.focus.copy(alpha = 0.2f) else colors.surface, CircleShape)
+            .background(if (arrival.panelOpen) colors.accent.copy(alpha = 0.2f) else colors.surface, CircleShape)
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -271,7 +271,7 @@ fun SmartHomeRailButton(provider: SmartHomeProvider, selected: Boolean, onClick:
                 SmartHome.screenProvider.value = provider.id
                 onClick()
             }
-            .background(if (selected) colors.focus.copy(alpha = 0.2f) else colors.surface, shape)
+            .background(if (selected) colors.accent.copy(alpha = 0.2f) else colors.surface, shape)
             .size(72.dp),
         contentAlignment = Alignment.Center,
     ) {

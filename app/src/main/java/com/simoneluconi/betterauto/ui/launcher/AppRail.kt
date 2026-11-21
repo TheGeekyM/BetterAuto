@@ -43,10 +43,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -61,6 +59,7 @@ import com.simoneluconi.betterauto.ui.CarIcon
 import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /** A button of the bar: one section, or a group of them. */
 private sealed interface RailButtonSpec {
@@ -92,8 +91,6 @@ fun AppRail(
     vertical: Boolean,
     firstFocus: FocusRequester,
     onOpenGroup: (RailSlot) -> Unit,
-    /** Beside the screen on the right (right-hand drive): its hairline on the screen's side, the left. */
-    onRight: Boolean = false,
 ) {
     val colors = LocalCarColors.current
     val context = LocalContext.current
@@ -113,16 +110,14 @@ fun AppRail(
         }
     } ?: buttons.firstOrNull().takeIf { section != Section.SETTINGS }
 
-    val surface = Modifier
-        .background(colors.surface)
-        .drawBehind {
-            val stroke = 1.dp.toPx()
-            val x = if (onRight) 0f else size.width
-            if (vertical) drawLine(colors.line, Offset(x, 0f), Offset(x, size.height), stroke)
-            else drawLine(colors.line, Offset(0f, 0f), Offset(size.width, 0f), stroke)
-        }
-        .padding(16.dp)
-    BoxWithConstraints(if (vertical) surface.fillMaxHeight().width(RAIL_WIDTH) else surface.fillMaxWidth().height(RAIL_HEIGHT)) {
+    // A pill of dark glass floating a little off the edges, as the player the look follows has its bar; the
+    // buttons get the same room as before inside it (the margin and the pill's padding add up to the old padding)
+    val pill = Modifier
+        .padding(RAIL_MARGIN)
+        .shadow(18.dp, RailShape, clip = false)
+        .glass(RailShape) { it.glass }
+        .padding(6.dp)
+    BoxWithConstraints(if (vertical) Modifier.fillMaxHeight().width(RAIL_WIDTH).then(pill) else Modifier.fillMaxWidth().height(RAIL_HEIGHT).then(pill)) {
         // Media apps take the room left by the sections, never pushing Settings out of the screen
         val length = if (vertical) maxHeight else maxWidth
         val free = ((length - SLOT * (buttons.size + 1 + homes.size) - DIVIDER) / SLOT).toInt().coerceIn(0, MAX_APPS)
@@ -177,7 +172,7 @@ fun AppRail(
                                 .align(Alignment.TopEnd)
                                 .padding(6.dp)
                                 .size(12.dp)
-                                .background(colors.focus, CircleShape)
+                                .background(colors.accent, CircleShape)
                         )
                     }
                 }
@@ -214,11 +209,11 @@ private fun GroupButton(items: List<RailItem>, selected: Boolean, modifier: Modi
     Box(
         modifier
             .carClickable(shape, stringResource(R.string.rail_group, names), onLongClick = onLongClick, onClick = onClick)
-            .background(if (selected) colors.focus.copy(alpha = 0.2f) else colors.surface2, shape)
+            .then(if (selected) Modifier.glass(shape) { it.surface2 } else Modifier)
             .size(72.dp),
         contentAlignment = Alignment.Center,
     ) {
-        val tint = if (selected) colors.text else colors.text2
+        val tint = if (selected) colors.accent else colors.text2
         if (items.size == 1) {
             CarIcon(items[0].icon, tint, Modifier.size(34.dp))
         } else {
@@ -254,8 +249,7 @@ fun RailGroupPanel(
     Row(
         modifier
             .shadow(24.dp, RoundedCornerShape(30.dp))
-            .clip(RoundedCornerShape(30.dp))
-            .background(colors.surface)
+            .glass(RoundedCornerShape(30.dp)) { it.glass }
             .padding(18.dp)
             // Neither the knob nor a nudge leaves the panel; only a choice or Back closes it
             .focusProperties { onExit = { if (requestedFocusDirection != FocusDirection.Enter) cancelFocusChange() } }
@@ -277,13 +271,13 @@ fun RailGroupPanel(
                         settings.setSection(item.section)
                         onClose()
                     }
-                    .background(if (selected) colors.focus.copy(alpha = 0.2f) else colors.surface2, shape)
+                    .glass(shape) { if (selected) it.accent.copy(alpha = 0.18f) else it.surface }
                     .size(width = 150.dp, height = 132.dp)
                     .padding(14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
             ) {
-                CarIcon(item.icon, colors.text, Modifier.size(40.dp))
+                CarIcon(item.icon, if (selected) colors.accent else colors.text, Modifier.size(40.dp))
                 CarLabel(stringResource(item.label), 20.sp, colors.text, weight = FontWeight.Bold, textAlign = TextAlign.Center)
             }
         }
@@ -310,11 +304,12 @@ private fun RailButton(
     Box(
         modifier
             .carClickable(shape, label, onLongClick = onLongClick, onClick = onClick)
-            .background(if (selected) colors.focus.copy(alpha = 0.2f) else colors.surface, shape)
+            // The current section in an inner pill of lighter glass, its icon in gold; the others bare on the bar
+            .then(if (selected) Modifier.glass(shape) { it.surface2 } else Modifier)
             .size(72.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarIcon(icon, if (selected) colors.text else colors.text2, Modifier.size(34.dp))
+        CarIcon(icon, if (selected) colors.accent else colors.text2, Modifier.size(34.dp))
     }
 }
 
@@ -329,6 +324,9 @@ private fun RailDivider(vertical: Boolean) {
     )
 }
 
-/** The app bar's size on the left and at the bottom: what floats over the screen centers beside it. */
+private val RailShape = RoundedCornerShape(36.dp)
+private val RAIL_MARGIN = 10.dp
+
+/** The app bar's size on the left and at the bottom, margins included: what floats over the screen centers beside it. */
 internal val RAIL_WIDTH = 112.dp
 internal val RAIL_HEIGHT = 104.dp

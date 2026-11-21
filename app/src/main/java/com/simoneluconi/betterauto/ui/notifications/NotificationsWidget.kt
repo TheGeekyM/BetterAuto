@@ -70,6 +70,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.widgets.PanelMessage
 import kotlinx.coroutines.delay
 
@@ -99,8 +100,8 @@ fun NotificationsWidget(settings: LauncherSettings, modifier: Modifier = Modifie
 
     BoxWithConstraints(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(24.dp)
     ) {
         val compact = maxHeight < 260.dp
@@ -129,8 +130,8 @@ private fun Header(settings: LauncherSettings, list: List<CarNotification>, comp
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CarLabel(stringResource(R.string.notif_title), if (compact) 22.sp else 26.sp, colors.text, weight = FontWeight.ExtraBold)
             if (list.isNotEmpty()) {
-                Box(Modifier.background(colors.focus, CircleShape).padding(horizontal = 10.dp, vertical = 2.dp)) {
-                    CarLabel(list.size.toString(), 17.sp, colors.bg, weight = FontWeight.Bold)
+                Box(Modifier.background(colors.accent, CircleShape).padding(horizontal = 10.dp, vertical = 2.dp)) {
+                    CarLabel(list.size.toString(), 17.sp, colors.onAccent, weight = FontWeight.Bold)
                 }
             }
             Spacer(Modifier.weight(1f))
@@ -164,7 +165,7 @@ private fun HeaderButton(
     Row(
         modifier
             .carClickable(shape, label, onClick = onClick)
-            .background(if (active) colors.focus.copy(alpha = 0.25f) else colors.surface2, shape)
+            .background(if (active) colors.accent.copy(alpha = 0.25f) else colors.surface2, shape)
             .height(52.dp)
             .padding(horizontal = if (text != null) 18.dp else 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -276,7 +277,7 @@ private fun NotificationAvatar(n: CarNotification, size: androidx.compose.ui.uni
         if (main != null) {
             Image(main, null, contentScale = ContentScale.Crop, modifier = Modifier.size(size).clip(CircleShape))
         } else {
-            Box(Modifier.size(size).background(colors.surface, CircleShape), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(size).glass(CircleShape), contentAlignment = Alignment.Center) {
                 CarIcon(CarIcons.Bell, colors.text2, Modifier.size(size * 0.45f))
             }
         }
@@ -334,7 +335,7 @@ private fun Detail(n: CarNotification, settings: LauncherSettings, hidden: Boole
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
                     message.sender?.takeIf { n.isGroup || it != n.title }?.let {
-                        CarLabel(it, 18.sp, colors.focus, weight = FontWeight.Bold)
+                        CarLabel(it, 18.sp, colors.accent, weight = FontWeight.Bold)
                     }
                     CarLabel(message.text, 22.sp, colors.text, maxLines = 8, lineHeight = 29.sp)
                 }
@@ -405,21 +406,20 @@ fun NotificationBanner(settings: LauncherSettings, modifier: Modifier = Modifier
         exit = slideOutVertically { -it } + fadeOut(),
     ) {
         val current = shown ?: lastShown ?: return@AnimatedVisibility
-        // A card like the others, lifted by a deep shadow; the only color is the album accent bar
+        // A card like the others, lifted by a deep shadow; the only color is the gold accent bar
         val shape = RoundedCornerShape(28.dp)
         Row(
             Modifier
                 .widthIn(min = 520.dp, max = 860.dp)
                 .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .glass(shape) { it.glass }
                 .clip(shape)
-                .background(colors.surface)
-                .border(1.dp, colors.line, shape)
                 .carTapOnly { settings.setSection(Section.NOTIFICATIONS); shown = null }
                 .padding(end = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(Modifier.width(8.dp).height(96.dp).background(colors.album))
+            Box(Modifier.width(8.dp).height(96.dp).background(colors.accent))
             NotificationAvatar(current, 60.dp)
             Column(Modifier.weight(1f, fill = false).padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

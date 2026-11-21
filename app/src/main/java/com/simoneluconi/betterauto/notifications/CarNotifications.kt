@@ -2,7 +2,10 @@ package com.simoneluconi.betterauto.notifications
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.RemoteInput
 import android.content.Context
+import android.content.Intent
+import android.os.Bundle
 import android.graphics.drawable.Icon
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -23,7 +26,14 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-data class NotificationMessage(val sender: String?, val text: String, val time: Long)
+/** [fromMe]: written by the driver (a reply shown in the chat), never read aloud. */
+data class NotificationMessage(val sender: String?, val text: String, val time: Long, val fromMe: Boolean = false)
+
+/**
+ * The chat's own reply action (a RemoteInput, as watches and Android Auto use it): [send] puts the text in and fires
+ * it; false when the app refused it.
+ */
+class MessageReply(val send: (Context, String) -> Boolean)
 
 /** A notification worth showing while driving: a message, a missed call, a reminder. */
 data class CarNotification(
@@ -41,6 +51,8 @@ data class CarNotification(
     val time: Long,
     /** Sender or contact picture, when the app provides one. */
     val avatar: ImageBitmap?,
+    /** How to answer it by voice; null when the app offers no reply. */
+    val reply: MessageReply? = null,
 ) {
     val last: NotificationMessage? get() = messages.lastOrNull()
 }
@@ -134,6 +146,8 @@ object CarNotifications {
             messages = listOf(NotificationMessage(if (group) "Luca" else title, text, System.currentTimeMillis())),
             time = System.currentTimeMillis(),
             avatar = null,
+            // Development: a reply goes nowhere, only to the log
+            reply = MessageReply { _, reply -> EventLog.log("Notifications: pretend reply of ${reply.length} characters"); true },
         )
         EventLog.log("Notifications: simulated ${if (group) "group " else ""}message")
         connected.value = true
@@ -241,12 +255,13 @@ object CarNotifications {
         val chatTitle: String
         val isGroup: Boolean
         if (style != null && style.messages.isNotEmpty()) {
-            messages = style.messages.takeLast(MAX_MESSAGES).map {
-                NotificationMessage(it.person?.name?.toString(), it.text?.toString().orEmpty(), it.timestamp)
-            }
+            messages = MessageText.fromStyle(
+                style.messages.map { StyleEntry(it.person?.name?.toString(), it.person?.key, it.text?.toString(), it.timestamp) },
+                style.user.key, style.user.name?.toString(), MAX_MESSAGES,
+            )
             isGroup = style.isGroupConversation
             chatTitle = style.conversationTitle?.toString()?.takeIf { it.isNotBlank() }
-                ?: messages.lastOrNull()?.sender ?: title
+                ?: messages.lastOrNull { !it.fromMe }?.sender ?: title
         } else {
             val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }
             val text = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))
@@ -270,7 +285,29 @@ object CarNotifications {
             messages = messages,
             time = messages.lastOrNull()?.time?.takeIf { it > 0 } ?: sbn.postTime,
             avatar = n.getLargeIcon()?.let { iconBitmap(service, it) },
+            reply = replyOf(n),
         )
+    }
+
+    /**
+     * The action that takes free text (WhatsApp, Telegram, Messages...): the semantic reply first, then any with a
+     * free-form RemoteInput, also among the wearable actions some apps keep it in.
+     */
+    private fun replyOf(n: Notification): MessageReply? {
+        val actions = n.actions.orEmpty().toList() + runCatching { Notification.WearableExtender(n).actions }.getOrNull().orEmpty()
+        val withText = actions.filter { a -> a.actionIntent != null && a.remoteInputs?.any { it.allowFreeFormInput } == true }
+        val action = withText.firstOrNull { it.semanticAction == Notification.Action.SEMANTIC_ACTION_REPLY } ?: withText.firstOrNull()
+            ?: return null
+        val inputs = action.remoteInputs
+        val input = inputs.first { it.allowFreeFormInput }
+        return MessageReply { context, text ->
+            runCatching {
+                val intent = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                RemoteInput.addResultsToIntent(inputs, intent, Bundle().apply { putCharSequence(input.resultKey, text) })
+                RemoteInput.setResultsSource(intent, RemoteInput.SOURCE_FREE_FORM_INPUT)
+                action.actionIntent.send(context, 0, intent)
+            }.onFailure { EventLog.log("Notifications: reply refused ($it)") }.isSuccess
+        }
     }
 
     /** Silent and minimized notifications (promotions, sync status...) stay off the car screen. */

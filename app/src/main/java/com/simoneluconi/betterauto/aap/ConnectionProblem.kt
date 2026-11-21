@@ -33,7 +33,13 @@ enum class ConnectionProblem {
     USB_NOT_OPENED,
 
     /** No usable private key and certificate among the app's PEM files: nothing to start TLS with. */
-    PHONE_CERTIFICATE;
+    PHONE_CERTIFICATE,
+
+    /** Wireless: the phone's WiFi is off, so Android refuses to join the head unit's. */
+    WIFI_OFF,
+
+    /** Wireless: Android refused the head unit's WiFi, or its dialog was cancelled or ignored: pair it once. */
+    WIFI_NOT_APPROVED;
 
     companion object {
         fun ofAuthStatus(status: Int): ConnectionProblem? = when (status) {

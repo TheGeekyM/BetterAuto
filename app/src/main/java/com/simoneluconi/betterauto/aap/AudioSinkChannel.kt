@@ -13,9 +13,11 @@ import aap_protobuf.service.media.sink.message.AudioStreamTypeOuterClass.AudioSt
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.audio.AudioSink
 import com.simoneluconi.betterauto.audio.CarAudio
+import com.simoneluconi.betterauto.audio.CarVoice
 import com.simoneluconi.betterauto.audio.PcmFormat
 import com.simoneluconi.betterauto.car.CarState
 import com.simoneluconi.betterauto.media.NowPlaying
+import com.simoneluconi.betterauto.radio.Radio
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -60,7 +62,11 @@ class AudioSinkChannel(
     @Volatile
     var ducked = false
 
-    override val gain: Float get() = if (ducked) DUCK_GAIN else 1f
+    /** Also under our own speech, mixed into this stream ([CarVoice]). */
+    override val gain: Float get() = if (ducked || (media && CarVoice.speaking)) DUCK_GAIN else 1f
+
+    /** The car's speakers are ours (a stream may start without asking): our speech may go into this stream. */
+    val holdsFocus: Boolean get() = hasFocus
 
     private sealed interface Outgoing
     private data object StartStream : Outgoing
@@ -175,7 +181,7 @@ class AudioSinkChannel(
                 // Back after a short loss, the music plays again; after a full one too if the car gives the focus
                 // back at once (an Audi MMX2 drops it for half a second as it settles on our stream, right
                 // after the auto-play)
-                pausedByCar = NowPlaying.track.value?.playing == true
+                pausedByCar = NowPlaying.track.value?.playing == true || Radio.on
                 lossTransient = state == AudioFocusStateType.AUDIO_FOCUS_STATE_LOSS_TRANSIENT
                 lostAt = SystemClock.elapsedRealtime()
                 EventLog.log("Media audio: the car took the sound, pausing the player")
@@ -291,7 +297,7 @@ class AudioSinkChannel(
      */
     private fun idleStopMs() = when {
         !media -> IDLE_STOP_GUIDANCE_MS
-        NowPlaying.track.value.let { it?.playing == true || it?.buffering == true } -> IDLE_STOP_PLAYING_MS
+        NowPlaying.track.value.let { it?.playing == true || it?.buffering == true } || Radio.on -> IDLE_STOP_PLAYING_MS
         else -> IDLE_STOP_MS
     }
 

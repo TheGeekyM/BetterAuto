@@ -18,6 +18,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
+import android.provider.Settings
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
@@ -35,6 +36,9 @@ import com.simoneluconi.betterauto.smarthome.SmartHome
 import com.simoneluconi.betterauto.transport.TcpTransport
 import com.simoneluconi.betterauto.transport.Transport
 import com.simoneluconi.betterauto.transport.UsbAccessoryTransport
+import com.simoneluconi.betterauto.transport.wireless.JoinFailure
+import com.simoneluconi.betterauto.transport.wireless.JoinPolicy
+import com.simoneluconi.betterauto.transport.wireless.WifiJoinException
 import com.simoneluconi.betterauto.transport.wireless.WirelessConnector
 import com.simoneluconi.betterauto.transport.wireless.WirelessState
 import com.simoneluconi.betterauto.transport.wireless.WirelessStep
@@ -150,7 +154,17 @@ class AapService : Service() {
         }
         if (intent?.action == ACTION_CONNECT_WIRELESS) {
             val address = intent.getStringExtra(EXTRA_DEVICE)
-            if (intent.getBooleanExtra(EXTRA_AUTO, false) && (session != null || connecting != null || pendingRetry != null)) {
+            val auto = intent.getBooleanExtra(EXTRA_AUTO, false)
+            val heldUntil = WirelessConnector.autoHeldUntil(this)
+            if (auto && session == null && connecting == null && pendingRetry == null &&
+                !JoinPolicy.autoAllowed(heldUntil, System.currentTimeMillis())
+            ) {
+                // Android refused the car's WiFi a moment ago: starting over would only repeat it (or its dialog)
+                EventLog.log("Wireless: automatic connection held for ${(heldUntil - System.currentTimeMillis()) / 60_000 + 1} min more after Android refused the WiFi; connect from the phone app")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            if (auto && (session != null || connecting != null || pendingRetry != null)) {
                 // The car came into range while the phone is already with it (or with another, by cable)
                 // Nothing to do, but a retry may be waiting: the service must stay for it
                 if (session == null && connecting == null && pendingRetry == null) stopSelf()
@@ -159,6 +173,8 @@ class AapService : Service() {
             cancelRetry()
             retriesLeft = MAX_RETRIES
             stoppedByUser = false
+            // Asked for by hand: whatever Android refused before, the driver may have fixed it
+            if (!auto) WirelessConnector.holdAuto(this, null)
             connectWireless(address)
             return START_NOT_STICKY
         }
@@ -232,8 +248,16 @@ class AapService : Service() {
                     connectingTo = null
                     // Missing permissions or Bluetooth off will not change by waiting
                     val reason = e.message.orEmpty()
+                    // Nor a WiFi Android refuses, or a dialog the driver cancelled or ignored: each try would
+                    // bring the dialog up again and end it (JoinPolicy)
+                    val joinRefused = e is WifiJoinException && !JoinPolicy.canRetry(e.failure, e.paired)
                     val hopeless = reason.startsWith("missing permissions") || reason == "Bluetooth is off" ||
-                        reason == "this phone has no Bluetooth"
+                        reason == "this phone has no Bluetooth" || joinRefused
+                    if (e is WifiJoinException) {
+                        explainJoinFailure(e)
+                        JoinPolicy.autoHoldUntil(e.failure, e.paired, System.currentTimeMillis())
+                            ?.let { WirelessConnector.holdAuto(this, it) }
+                    }
                     if (!hopeless && session == null && scheduleRetry(address)) return@post
                     WirelessConnector.report(WirelessState.Failed(connector.step, e.message.orEmpty()))
                     if (session == null) stopSelf()
@@ -254,6 +278,14 @@ class AapService : Service() {
                 WirelessConnector.report(WirelessState.Connected)
                 startSession(transport, Link.NETWORK, getString(R.string.wireless_title))
             }
+        }
+    }
+
+    /** What the driver can do about a WiFi join that did not work: switch the WiFi on, or pair it once. */
+    private fun explainJoinFailure(e: WifiJoinException) {
+        when {
+            e.failure == JoinFailure.WIFI_OFF -> showProblem(this, ConnectionProblem.WIFI_OFF, null, null)
+            JoinPolicy.needsPairing(e.failure, e.paired) -> showProblem(this, ConnectionProblem.WIFI_NOT_APPROVED, null, null)
         }
     }
 
@@ -509,6 +541,16 @@ class AapService : Service() {
                 ConnectionProblem.DROPPED_DURING_SETUP -> R.string.problem_dropped_title to R.string.problem_dropped_text
                 ConnectionProblem.USB_NOT_OPENED -> R.string.problem_usb_title to R.string.problem_usb_text
                 ConnectionProblem.PHONE_CERTIFICATE -> R.string.problem_phone_certificate_title to R.string.problem_phone_certificate_text
+                ConnectionProblem.WIFI_OFF -> R.string.problem_wifi_off_title to R.string.problem_wifi_off_text
+                ConnectionProblem.WIFI_NOT_APPROVED -> R.string.problem_wifi_approval_title to R.string.problem_wifi_approval_text
+            }
+            // Where the tap leads: the WiFi switch, the pairing on the Wireless page, or the app
+            val open = when (problem) {
+                ConnectionProblem.WIFI_OFF -> Intent(Settings.Panel.ACTION_WIFI)
+                ConnectionProblem.WIFI_NOT_APPROVED -> Intent(context, MainActivity::class.java)
+                    .putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_WIFI_PAIRING)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                else -> Intent(context, MainActivity::class.java)
             }
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
@@ -524,7 +566,7 @@ class AapService : Service() {
                 .setOnlyAlertOnce(true)
                 .setAutoCancel(true)
                 .setContentIntent(
-                    PendingIntent.getActivity(context, 2, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+                    PendingIntent.getActivity(context, 2, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
                 )
             carMaker?.let(builder::setSubText)
             manager.notify(PROBLEM_NOTIFICATION_ID, builder.build())

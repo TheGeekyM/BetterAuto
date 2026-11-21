@@ -69,6 +69,7 @@ import com.simoneluconi.betterauto.ui.launcher.settingValue
 import com.simoneluconi.betterauto.ui.launcher.widgetPlaced
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /** A page inside the phone's settings: a category, a list of one of its settings, or a home slot's widgets. */
 private sealed interface SettingsPage {
@@ -233,8 +234,8 @@ private fun CategoryPage(category: SettingsCategory, settings: LauncherSettings,
         Row(
             Modifier
                 .fillMaxWidth()
+                .glass(RoundedCornerShape(24.dp))
                 .clip(RoundedCornerShape(24.dp))
-                .background(colors.surface)
                 .clickable { open = !open }
                 .padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -282,7 +283,7 @@ internal fun PhoneTitleBlock(title: String, description: String, note: String? =
     Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         CarLabel(title, 16.sp, colors.text, weight = FontWeight.Bold, maxLines = 2)
         CarLabel(description, 14.sp, colors.text2, maxLines = 5, lineHeight = 19.sp)
-        note?.let { CarLabel(it, 14.sp, colors.focus, weight = FontWeight.Bold, maxLines = 2) }
+        note?.let { CarLabel(it, 14.sp, colors.accent, weight = FontWeight.Bold, maxLines = 2) }
     }
 }
 
@@ -354,12 +355,12 @@ internal fun PhoneSwitch(on: Boolean) {
     Box(
         Modifier
             .size(width = 52.dp, height = 30.dp)
-            .background(if (on) colors.focus else colors.surface2, RoundedCornerShape(50))
-            .border(1.dp, if (on) colors.focus else colors.line, RoundedCornerShape(50))
+            .background(if (on) colors.accent else colors.surface2, RoundedCornerShape(50))
+            .border(1.dp, if (on) colors.accent else colors.line, RoundedCornerShape(50))
             .padding(4.dp),
         contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        Box(Modifier.size(22.dp).background(if (on) Color.White else colors.text2, CircleShape))
+        Box(Modifier.size(22.dp).background(if (on) colors.onAccent else colors.text2, CircleShape))
     }
 }
 
@@ -421,11 +422,11 @@ internal fun PhoneTickRow(
         Box(
             Modifier
                 .size(26.dp)
-                .background(if (ticked) colors.focus else Color.Transparent, CircleShape)
-                .border(2.dp, if (ticked) colors.focus else colors.line, CircleShape),
+                .background(if (ticked) colors.accent else Color.Transparent, CircleShape)
+                .border(2.dp, if (ticked) colors.accent else colors.line, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            if (ticked) CarIcon(CarIcons.Check, Color.White, Modifier.size(16.dp))
+            if (ticked) CarIcon(CarIcons.Check, colors.onAccent, Modifier.size(16.dp))
         }
     }
 }
@@ -451,7 +452,7 @@ private fun PhoneRailEditor(item: RailLayoutSetting, settings: LauncherSettings)
     val colors = LocalCarColors.current
     val layout by settings.railLayout.collectAsStateWithLifecycle()
     var refused by remember { mutableStateOf<Int?>(null) }
-    refused?.let { CarLabel(stringResource(it), 14.sp, colors.focus, Modifier.padding(horizontal = 4.dp), weight = FontWeight.Bold, maxLines = 3) }
+    refused?.let { CarLabel(stringResource(it), 14.sp, colors.accent, Modifier.padding(horizontal = 4.dp), weight = FontWeight.Bold, maxLines = 3) }
     PhoneCard {
         for ((index, entry) in layout.withIndex()) {
             key(entry.item) {
@@ -538,7 +539,7 @@ internal fun Chip(label: String, selected: Boolean, icon: ImageBitmap? = null, o
     Row(
         Modifier
             .clip(shape)
-            .background(if (selected) colors.focus.copy(alpha = 0.22f) else colors.surface2)
+            .background(if (selected) colors.accent.copy(alpha = 0.22f) else colors.surface2)
             .clickable(onClick = onClick)
             .padding(start = if (icon != null) 6.dp else 16.dp, end = 16.dp, top = if (icon != null) 6.dp else 10.dp, bottom = if (icon != null) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,

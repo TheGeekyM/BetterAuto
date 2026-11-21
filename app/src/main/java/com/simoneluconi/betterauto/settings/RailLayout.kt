@@ -4,6 +4,7 @@ package com.simoneluconi.betterauto.settings
 enum class RailItem(val section: Section) {
     HOME(Section.HOME),
     MUSIC(Section.MUSIC),
+    RADIO(Section.RADIO),
     MAP(Section.MAP),
     PHONE(Section.PHONE),
     VEHICLE(Section.VEHICLE),
@@ -20,6 +21,7 @@ object RailLayout {
     val Default = listOf(
         RailEntry(RailItem.HOME, RailSlot.BAR),
         RailEntry(RailItem.MUSIC, RailSlot.BAR),
+        RailEntry(RailItem.RADIO, RailSlot.BAR),
         RailEntry(RailItem.MAP, RailSlot.BAR),
         RailEntry(RailItem.PHONE, RailSlot.BAR),
         RailEntry(RailItem.VEHICLE, RailSlot.BAR),
@@ -65,6 +67,50 @@ enum class ClockStyle { HIDDEN, AUTO, H24, H12 }
 
 /** Which microphone voice commands listen to: the car's when it has one, or always the phone's. */
 enum class MicSource { CAR, PHONE }
+
+/**
+ * How readily the wake phrase wakes the assistant, as [com.simoneluconi.betterauto.voice.wake.WakeMatcher.threshold]'s
+ * 0..1 ([value]). NORMAL wants the whole phrase; EAGER also takes it with a syllable lost (more caught, more false
+ * wakes); STRICT only a clean one.
+ */
+enum class WakeSensitivity(val value: Float) { STRICT(0.25f), NORMAL(0.5f), EAGER(0.75f) }
+
+/** Who speaks: one of the recorded voices (folders of `assets/voice/`), or the phone's text-to-speech. */
+enum class SpokenVoice(val folder: String?) {
+    AUTONOE("autonoe"), SORAYA("soraya"), NADINE("nadine"), PHONE(null);
+
+    companion object {
+        /** Until the driver picks one. Autonoe speaks Arabic only, and may not be in the build: [FALLBACK] then. */
+        val DEFAULT = AUTONOE
+        /** Speaks for a recorded voice in a language (or a build) it has no recordings for. */
+        val FALLBACK = SORAYA
+    }
+}
+
+/**
+ * Where voice commands are understood. Auto: a clear command on the phone at once, anything else (questions, loose
+ * phrasing) online with Gemini and Claude when the build has their keys and the phone is online; Online: always
+ * online when it can be; Offline: only the phone, as before.
+ */
+enum class VoiceBrain { AUTO, ONLINE, OFFLINE }
+
+/** Claude model of the online assistant: Haiku answers fastest, Sonnet understands loose phrasing better. */
+enum class ClaudeModel(val id: String) { HAIKU("claude-haiku-5-5"), SONNET("claude-sonnet-5-5"), OPUS("claude-opus-5-5") }
+
+/** Gemini model that turns the recorded command into text. */
+enum class SttModel(val id: String) { FLASH_LITE("gemini-3.5-flash-lite"), FLASH("gemini-2.5-flash") }
+
+/** Gemini's prebuilt voices for spoken answers, female ones first. */
+enum class GeminiVoice(val female: Boolean) {
+    ZEPHYR(true), KORE(true), LEDA(true), AOEDE(true), CALLIRRHOE(true), AUTONOE(true), DESPINA(true), ERINOME(true),
+    LAOMEDEIA(true), ACHERNAR(true), GACRUX(true), PULCHERRIMA(true), VINDEMIATRIX(true), SULAFAT(true),
+    PUCK(false), CHARON(false), FENRIR(false), ORUS(false), ENCELADUS(false), IAPETUS(false), UMBRIEL(false),
+    ALGIEBA(false), ALGENIB(false), RASALGETHI(false), ALNILAM(false), SCHEDAR(false), ACHIRD(false),
+    ZUBENELGENUBI(false), SADACHBIA(false), SADALTAGER(false);
+
+    /** The name the API takes ("Kore"). */
+    val apiName: String get() = name.lowercase().replaceFirstChar { it.uppercase() }
+}
 
 /** How the date in the status bar is shown. */
 enum class DateStyle { HIDDEN, SHORT, LONG, NUMERIC }

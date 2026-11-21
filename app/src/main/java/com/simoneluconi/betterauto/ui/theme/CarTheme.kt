@@ -1,55 +1,78 @@
 package com.simoneluconi.betterauto.ui.theme
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.simoneluconi.betterauto.R
 
+/**
+ * The launcher's palette: glass, after the "Square" player the driver likes. A page ([bg], with the cover blurred
+ * behind it, see `Backdrop`), panes of frosted glass on it with a hairline edge, floating pills of more opaque glass
+ * over content that moves (the map, lists, the cover), and one baby blue for the focus, what is selected and what
+ * plays. By night dark glass on a near-black page; by day white glass on a light page. The map follows.
+ */
 @Immutable
 data class CarColors(
+    /** The page under everything: opaque. */
     val bg: Color,
+    /** Glass: the cards on the page. Translucent, so the page (and the blurred cover) shows through. */
     val surface: Color,
+    /** Stronger glass: chips, buttons and cards that sit on [surface]. */
     val surface2: Color,
+    /** Hairlines between rows. */
     val line: Color,
+    /** Floating glass over content that moves or is busy (the map, lists, the cover): nearly opaque. */
+    val glass: Color,
+    /** The 1 dp edge every pane of glass has: light by night, a soft grey by day. */
+    val glassEdge: Color,
     val text: Color,
+    /** Labels and secondary text. */
     val text2: Color,
+    /** The knob's ring. */
     val focus: Color,
-    /** Accent taken from the album art (or a default), used by the music widget. */
-    val album: Color,
+    /** What is selected or plays: the current section, the progress, the play button. */
+    val accent: Color,
+    /** Readable on [accent] (and on a [text] fill). */
+    val onAccent: Color,
     /** The map's own colors, fading with the rest. */
     val map: MapColors,
-) {
-    /** Readable content color on top of [album]. */
-    val onAlbum: Color get() = if (album.luminance() > 0.35f) Color(0xFF1B1006) else Color.White
+)
 
-    /** Card background tinted by the album color. */
-    val albumCard: Color get() = lerp(surface, album, 0.16f)
-}
+/** The driver's main colour: baby blue (night), with dark ink on it. */
+private val Gold = Color(0xFF89CFF0)
+private val GoldInk = Color(0xFF0A1A24)
 
 val NightColors = CarColors(
-    bg = Color(0xFF090B0E),
-    surface = Color(0xFF14171C),
-    surface2 = Color(0xFF1C2128),
-    line = Color(0xFF2A303A),
-    text = Color(0xFFF3F5F8),
-    text2 = Color(0xFFA9B1BE),
-    focus = Color(0xFF5EA8FF),
-    album = Color(0xFF5EA8FF),
+    bg = Color(0xFF0A0A0C),
+    surface = Color(0x14FFFFFF),
+    surface2 = Color(0x1FFFFFFF),
+    line = Color(0x1AFFFFFF),
+    glass = Color(0xE0141417),
+    glassEdge = Color(0x24FFFFFF),
+    text = Color(0xFFF5F5F7),
+    text2 = Color(0xFFA9A9AE),
+    focus = Gold,
+    accent = Gold,
+    onAccent = GoldInk,
     // A little lighter than the screen's own bg, roads well above it: on a dimmed car display at night the first
     // palette was nearly black, the road hard to tell from the land (a road test)
     map = MapColors(
@@ -72,18 +95,28 @@ val NightColors = CarColors(
         labelMinor = Color(0xFF8A94A3),
         labelMotorway = Color(0xFFF3F5F8),
         halo = Color(0xFF171B22),
+        route = Color(0xFF5EA8FF),
+        puck = Color(0xFFA9B1BE),
     ),
 )
 
+/**
+ * By day white glass on a light page, Square's look turned light: frosted white panes, dark text, a deeper baby blue so it
+ * still reads on white (3.8:1, large text and fills; dark ink on it 4.9:1). The map light.
+ */
 val DayColors = CarColors(
-    bg = Color(0xFFE7EBF0),
-    surface = Color(0xFFFFFFFF),
-    surface2 = Color(0xFFF1F3F6),
-    line = Color(0xFFD3D9E1),
-    text = Color(0xFF0F1318),
-    text2 = Color(0xFF4A5462),
-    focus = Color(0xFF0B63CE),
-    album = Color(0xFF0B63CE),
+    bg = Color(0xFFEEF0F4),
+    surface = Color(0xB8FFFFFF),
+    surface2 = Color(0x0F14161B),
+    line = Color(0x1F14161B),
+    glass = Color(0xEBFFFFFF),
+    glassEdge = Color(0x1F14161B),
+    text = Color(0xFF14161B),
+    text2 = Color(0xFF5E6470),
+    // A deeper baby blue by day: the light one fades into white glass (this one ~3.2:1 on white, dark ink ~6:1)
+    focus = Color(0xFF3A9AD9),
+    accent = Color(0xFF3A9AD9),
+    onAccent = GoldInk,
     map = MapColors(
         land = Color(0xFFEEF1F4),
         landuse = Color(0xFFE8EBEF),
@@ -103,8 +136,19 @@ val DayColors = CarColors(
         labelMinor = Color(0xFF6B7584),
         labelMotorway = Color(0xFF5A3E06),
         halo = Color(0xFFFFFFFF),
+        route = Color(0xFF0B63CE),
+        puck = Color(0xFF4A5462),
     ),
 )
+
+/**
+ * A pane of glass: [fill] (a glass token: [CarColors.surface] for cards, [CarColors.glass] for what floats over
+ * content) in [shape], with the light hairline edge. Not clipped, so a knob ring drawn outside stays visible.
+ */
+fun Modifier.glass(shape: Shape, fill: (CarColors) -> Color = { it.surface }): Modifier = composed {
+    val colors = LocalCarColors.current
+    background(fill(colors), shape).border(1.dp, colors.glassEdge, shape)
+}
 
 /** A road sign on the map (the speed limit): the same by day and by night, like the real ones. */
 val SignRed = Color(0xFFD7262E)
@@ -142,6 +186,10 @@ data class MapColors(
     val labelMinor: Color,
     val labelMotorway: Color,
     val halo: Color,
+    /** The route line and the maneuver arrow: drawn by code, not in the style file. */
+    val route: Color,
+    /** The car on the map, standing out on the route. */
+    val puck: Color,
 ) {
     /** The colors by their placeholder names. */
     fun byName(): Map<String, Color> = mapOf(
@@ -172,6 +220,8 @@ data class MapColors(
             labelMinor = lerp(a.labelMinor, b.labelMinor, t),
             labelMotorway = lerp(a.labelMotorway, b.labelMotorway, t),
             halo = lerp(a.halo, b.halo, t),
+            route = lerp(a.route, b.route, t),
+            puck = lerp(a.puck, b.puck, t),
         )
     }
 }
@@ -184,7 +234,7 @@ private fun manrope(weight: Int) = Font(
 
 val Manrope = FontFamily(manrope(500), manrope(600), manrope(700), manrope(800))
 
-// The palette changes on every frame of a theme fade or album color change: a tracked local
+// The palette changes on every frame of a theme fade: a tracked local
 // recomposes only what reads it, a static one would recompose the whole launcher each frame
 val LocalCarColors = compositionLocalOf { NightColors }
 
@@ -194,12 +244,11 @@ val CarText = TextStyle(fontFamily = Manrope, fontWeight = FontWeight.SemiBold, 
 private const val THEME_FADE_MS = 1400
 
 /**
- * Day/night palette with a slow fade instead of a flash. Surfaces fade over the whole duration
- * while text flips quickly around the point where the background crosses mid-luminance,
- * so text never fades into the background. [album] tints the music widget and follows the track.
+ * Day/night palette (the map's too) with a slow fade instead of a flash. Surfaces fade over the whole duration while
+ * text flips quickly around the point where the background crosses mid-luminance, so text never fades into it.
  */
 @Composable
-fun CarTheme(night: Boolean, album: Color?, content: @Composable () -> Unit) {
+fun CarTheme(night: Boolean, content: @Composable () -> Unit) {
     val progress by animateFloatAsState(
         targetValue = if (night) 1f else 0f,
         animationSpec = tween(THEME_FADE_MS, easing = FastOutSlowInEasing),
@@ -208,7 +257,6 @@ fun CarTheme(night: Boolean, album: Color?, content: @Composable () -> Unit) {
     val textProgress = smoothStep((progress - TEXT_FLIP_START) / (TEXT_FLIP_END - TEXT_FLIP_START))
     val day = DayColors
     val dark = NightColors
-    val albumColor by animateColorAsState(album ?: lerp(day.album, dark.album, progress), tween(900), label = "album")
 
     CompositionLocalProvider(
         LocalCarColors provides CarColors(
@@ -216,17 +264,21 @@ fun CarTheme(night: Boolean, album: Color?, content: @Composable () -> Unit) {
             surface = lerp(day.surface, dark.surface, progress),
             surface2 = lerp(day.surface2, dark.surface2, progress),
             line = lerp(day.line, dark.line, progress),
+            glass = lerp(day.glass, dark.glass, progress),
+            glassEdge = lerp(day.glassEdge, dark.glassEdge, progress),
             text = lerp(day.text, dark.text, textProgress),
             text2 = lerp(day.text2, dark.text2, textProgress),
             focus = lerp(day.focus, dark.focus, progress),
-            album = albumColor,
-            // Labels flip with the text, so they never fade into the land under them
+            accent = lerp(day.accent, dark.accent, progress),
+            onAccent = dark.onAccent,
+            // Labels (and the car drawn on the map) flip with the text, so they never fade into the land
             map = MapColors.lerp(day.map, dark.map, progress).copy(
                 labelRoad = lerp(day.map.labelRoad, dark.map.labelRoad, textProgress),
                 labelPlace = lerp(day.map.labelPlace, dark.map.labelPlace, textProgress),
                 labelMinor = lerp(day.map.labelMinor, dark.map.labelMinor, textProgress),
                 labelMotorway = lerp(day.map.labelMotorway, dark.map.labelMotorway, textProgress),
                 halo = lerp(day.map.halo, dark.map.halo, textProgress),
+                puck = lerp(day.map.puck, dark.map.puck, textProgress),
             ),
         ),
         content = content,

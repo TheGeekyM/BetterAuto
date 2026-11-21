@@ -9,7 +9,10 @@ import com.simoneluconi.betterauto.notifications.CarNotifications
  * sessions, and the notifications themselves feed the car's notifications widget.
  */
 class MediaListenerService : NotificationListenerService() {
-    override fun onListenerConnected() = CarNotifications.onConnected(this)
+    override fun onListenerConnected() {
+        CarNotifications.onConnected(this)
+        NowPlaying.onAccessGranted()
+    }
 
     override fun onListenerDisconnected() = CarNotifications.onDisconnected()
 

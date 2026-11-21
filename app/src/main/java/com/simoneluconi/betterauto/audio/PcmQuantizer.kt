@@ -20,11 +20,15 @@ class PcmQuantizer(format: PcmFormat) {
      * Hands the first [count] samples to [sink] as PCM. Silence the sink has no use for (no stream running)
      * is dropped before it costs a conversion: capture runs all session long, music or not.
      */
-    fun deliver(sink: AudioSink, samples: FloatArray, count: Int, timestampUs: Long) {
+    fun deliver(sink: AudioSink, samples: FloatArray, count: Int, timestampUs: Long, voice: VoiceQueue? = null) {
         // Silence is judged before dither, so dither noise alone never counts as sound
-        val silent = isSilent(samples, count)
+        val speech = voice?.hasSound == true
+        val musicSilent = isSilent(samples, count)
+        val silent = musicSilent && !speech
         if (silent && !sink.wantsSilence) return
         applyGain(samples, count, sink.gain)
+        // Our own speech goes over the (lowered) music, at its own level
+        if (voice != null) voice.speechOnly = voice.mixInto(samples, count) && musicSilent
         sink.onPcm(quantize(samples, count), timestampUs, silent)
     }
 

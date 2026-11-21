@@ -13,6 +13,7 @@ import com.simoneluconi.betterauto.car.CarMotion
 import com.simoneluconi.betterauto.car.CarMotionState
 import com.simoneluconi.betterauto.media.MediaApps
 import com.simoneluconi.betterauto.media.NowPlaying
+import com.simoneluconi.betterauto.radio.Radio
 import com.simoneluconi.betterauto.settings.LauncherSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,8 @@ interface AudioSink {
  * Navigation prompts: with Shizuku they move to the car's guidance stream, which the car plays over
  * the music, lowering it. Playback capture cannot take them, so without Shizuku (or without a guidance
  * stream) they play on the phone: [NavPrompts] notices them, the phone's speaker comes back for the
- * moment and the music in the car is lowered under them.
+ * moment and the music in the car is lowered under them. BetterAuto's own speech is never captured either: while
+ * copying, [CarVoice] mixes it into the copied music instead.
  */
 object CarAudio {
     private lateinit var appContext: Context
@@ -143,7 +145,7 @@ object CarAudio {
     fun onDisconnected() {
         if (sink == null) return
         val now = System.currentTimeMillis()
-        val playingNow = NowPlaying.track.value?.playing == true
+        val playingNow = NowPlaying.track.value?.playing == true || Radio.on
         // Cars switching off pause the music themselves a little before they go: that was not the driver
         val pausedBySwitchOff = !playingNow && playingBeforeCarPause && now - carPausedAt < SWITCH_OFF_PAUSE_MS
         val playing = playingNow || pausedBySwitchOff
@@ -160,7 +162,7 @@ object CarAudio {
     /** The car sent a pause (not play/pause): maybe the driver, maybe the car switching off. */
     @Synchronized
     fun onCarPause() {
-        playingBeforeCarPause = NowPlaying.track.value?.playing == true
+        playingBeforeCarPause = NowPlaying.track.value?.playing == true || Radio.on
         carPausedAt = System.currentTimeMillis()
         checkSwitchOff()
     }
@@ -277,6 +279,7 @@ object CarAudio {
 
     private fun restart() {
         val wasMoving = shizuku != null
+        CarVoice.attach(null)
         stopCopyWatch()
         capture?.stop()
         capture = null
@@ -311,7 +314,7 @@ object CarAudio {
         }
         lastCopySound = 0L
         capture = try {
-            AudioCapture(p, HeardSink(s) { lastCopySound = SystemClock.elapsedRealtime() }, carUsages()).also { it.start() }
+            AudioCapture(p, HeardSink(s) { lastCopySound = SystemClock.elapsedRealtime() }, carUsages(), CarVoice.queue).also { it.start() }
         } catch (e: Exception) {
             EventLog.log("Audio capture failed: $e")
             null
@@ -323,7 +326,9 @@ object CarAudio {
         }
         onAudioOnPhone?.invoke(false)
         PhoneSpeakerMute.engage(appContext)
-        // Capture cannot take the prompts: they play on the (muted) phone, brought back up while they speak
+        // Our own speech is mixed into the copy; other apps' prompts, which capture cannot take, play on the
+        // (muted) phone, brought back up while they speak
+        CarVoice.attach(if (capture?.floatCapture == true) s as? AudioSinkChannel else null)
         startPrompts(liftSpeaker = true)
         watchCopy()
         autoPlayOnce()
@@ -333,8 +338,8 @@ object CarAudio {
     @Volatile
     private var lastCopySound = 0L
     private var copyWatch: Job? = null
-    /** The copy heard nothing while a player played: the phone's speaker was given back. */
-    private var speakerBack = false
+    /** Whether the phone's speaker was given back to a player the copy does not hear ([watchCopy]). */
+    private var copyState: CopyWatch? = null
 
     /**
      * A player may refuse to be copied: Spotify 9.2 opens its AAudio streams with capture allowed to the system
@@ -342,31 +347,36 @@ object CarAudio {
      * playback capture never hears it, while the shell-side route that Shizuku runs takes it. Muted, the phone
      * then gave the sound to neither: silence everywhere. So while copying, a player playing for [COPY_SILENT_MS]
      * with nothing heard gets the phone's speaker back, with a notification; when the copy hears sound again
-     * (another player) the phone is muted again.
+     * (another player) the phone is muted again. A player that goes quiet again as soon as it is muted keeps the
+     * speaker instead ([CopyWatch]): re-muting it every time cut the music in the car to a second in ten.
      */
     private fun watchCopy() {
-        speakerBack = false
+        val watch = CopyWatch(COPY_SILENT_MS, COPY_CHECK_MS)
+        copyState = watch
         copyWatch = scope.launch {
-            var playingSince = 0L
             while (true) {
                 delay(COPY_CHECK_MS)
                 val now = SystemClock.elapsedRealtime()
                 val track = NowPlaying.track.value
-                playingSince = if (track?.playing == true) playingSince.takeIf { it != 0L } ?: now else 0L
-                val quietFor = now - maxOf(lastCopySound, playingSince)
+                val player = track?.packageName?.takeIf { track.playing }
                 synchronized(this@CarAudio) {
                     if (capture == null) return@launch
-                    if (!speakerBack && playingSince != 0L && quietFor >= COPY_SILENT_MS) {
-                        speakerBack = true
-                        EventLog.log("Car audio: ${track?.packageName} plays but the copy hears nothing (it does not let itself be copied), its sound back on the phone")
-                        // The prompts' watch stays: with nothing saved, lifting the speaker does nothing
-                        PhoneSpeakerMute.release(appContext)
-                        onCopyHearsNothing?.invoke(false, track?.packageName)
-                    } else if (speakerBack && now - lastCopySound < COPY_CHECK_MS * 2) {
-                        speakerBack = false
-                        EventLog.log("Car audio: the copy hears the music again, the phone is muted again")
-                        PhoneSpeakerMute.engage(appContext)
-                        onCopyHearsNothing?.invoke(true, null)
+                    when (watch.check(now, player, lastCopySound)) {
+                        CopyWatch.Action.SPEAKER_BACK -> {
+                            EventLog.log(
+                                if (watch.mutesItself) "Car audio: $player went quiet again once the phone was muted (it mutes itself), its sound stays on the phone too"
+                                else "Car audio: $player plays but the copy hears nothing (it does not let itself be copied), its sound back on the phone",
+                            )
+                            // The prompts' watch stays: with nothing saved, lifting the speaker does nothing
+                            PhoneSpeakerMute.release(appContext)
+                            onCopyHearsNothing?.invoke(false, player)
+                        }
+                        CopyWatch.Action.MUTE_AGAIN -> {
+                            EventLog.log("Car audio: the copy hears the music again, the phone is muted again")
+                            PhoneSpeakerMute.engage(appContext)
+                            onCopyHearsNothing?.invoke(true, null)
+                        }
+                        CopyWatch.Action.NONE -> Unit
                     }
                 }
             }
@@ -376,14 +386,14 @@ object CarAudio {
     private fun stopCopyWatch() {
         copyWatch?.cancel()
         copyWatch = null
-        if (speakerBack) onCopyHearsNothing?.invoke(true, null)
-        speakerBack = false
+        if (copyState?.speakerBack == true) onCopyHearsNothing?.invoke(true, null)
+        copyState = null
     }
 
-    /** Passes the copy on, noting when it carries sound. */
+    /** Passes the copy on, noting when it carries sound of the players (not our own speech mixed in). */
     private class HeardSink(private val inner: AudioSink, private val heard: () -> Unit) : AudioSink by inner {
         override fun onPcm(data: ByteArray, timestampUs: Long, silent: Boolean) {
-            if (!silent) heard()
+            if (!silent && !CarVoice.queue.speechOnly) heard()
             inner.onPcm(data, timestampUs, silent)
         }
     }

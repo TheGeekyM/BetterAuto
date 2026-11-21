@@ -45,6 +45,9 @@ import com.simoneluconi.betterauto.map.nav.Maneuver
 import com.simoneluconi.betterauto.map.nav.ManeuverKind
 import com.simoneluconi.betterauto.map.nav.NavRoute
 import com.simoneluconi.betterauto.map.nav.Navigation
+import com.simoneluconi.betterauto.map.nav.TrafficStretch
+import com.simoneluconi.betterauto.ui.vehicle.StopRed
+import com.simoneluconi.betterauto.ui.vehicle.WarningAmber
 import com.simoneluconi.betterauto.map.roads.RoadInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -223,9 +226,9 @@ class CarMapState(private var defaultZoom: Double, private val tilt: Double) {
      * transition that never ends: the map stood still until the car drove off the screen). Following, the camera's
      * centre is the car, a glide behind at most: farther than the car goes in a few seconds, twice in a row, the
      * camera goes there at once; and at once after a mode change that never reported its end, without waiting for
-     * the car to drive away.
+     * the car to drive away, or after a [jumped] position (the GPS back after a stall, a kilometre on).
      */
-    internal fun keepTracking(map: MapLibreMap, fix: MapFix) {
+    internal fun keepTracking(map: MapLibreMap, fix: MapFix, jumped: Boolean = false) {
         val component = map.locationComponent
         if (!following || !component.isLocationComponentActivated) return
         val target = map.cameraPosition.target
@@ -234,10 +237,14 @@ class CarMapState(private var defaultZoom: Double, private val tilt: Double) {
         // Asked first, every time: it is what notices a lost transition
         val moving = transitioning()
         lostFixes = if (away > allowed && !moving) lostFixes + 1 else 0
-        if (lostFixes >= LOST_FIXES || transitionLost) {
+        val leapt = jumped && away > allowed
+        if (lostFixes >= LOST_FIXES || transitionLost || leapt) {
             EventLog.log(
-                if (transitionLost) "Map: the camera's move to the car never ended, back to it"
-                else "Map: the camera was ${away.roundToInt()} m from the car, back to it",
+                when {
+                    transitionLost -> "Map: the camera's move to the car never ended, back to it"
+                    leapt -> "Map: the car jumped ${away.roundToInt()} m, the camera goes there at once"
+                    else -> "Map: the camera was ${away.roundToInt()} m from the car, back to it"
+                },
             )
             lostFixes = 0
             transitionLost = false
@@ -276,6 +283,12 @@ class CarMapState(private var defaultZoom: Double, private val tilt: Double) {
             kmh >= 55 && current >= 1 -> 1
             else -> 0
         }
+        /** A position this far from the last one drawn is a jump, not a drive: shown at once, not glided to. */
+        private const val JUMP_M = 250.0
+
+        /** From [from] to [to] the car jumped (a stall of the GPS, a stale position replaced), it did not drive. */
+        internal fun jumped(from: MapFix, to: MapFix): Boolean = distanceM(from.latitude, from.longitude, to.latitude, to.longitude) > JUMP_M
+
         private val Tracking = setOf(CameraMode.TRACKING, CameraMode.TRACKING_COMPASS, CameraMode.TRACKING_GPS, CameraMode.TRACKING_GPS_NORTH)
     }
 }
@@ -348,7 +361,8 @@ fun CarMap(
         }
     }
 
-    // The position and the road only while the map is on screen: the phone's GPS and the network rest otherwise
+    // The road only while the map is on screen: the network rests otherwise. The position runs for the whole car
+    // session anyway (LauncherRoot); this keeps it for a map shown without one (the preview on the phone)
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             val releaseLocation = MapLocation.request(context)
@@ -371,6 +385,7 @@ fun CarMap(
         val map = state.map ?: return@LaunchedEffect
         if (style == null) return@LaunchedEffect
         var fedAt = 0L
+        var lastShown: MapFix? = null
         MapLocation.fix.filterNotNull().collect { fix ->
             // A car sends some fixes a tenth of a second after the one before: MapLibre glides to the next one in the
             // time between the last two, so the car lurched ahead and then stood still for a second. Evenly, at most
@@ -379,9 +394,15 @@ fun CarMap(
             fedAt = fix.at
             // On the route, or else on the road, when the GPS is just a few metres beside it
             val shown = Navigation.snapToRoute(fix) ?: RoadInfo.snap(fix) ?: fix
-            map.locationComponent.forceLocationUpdate(shown.toLocation())
+            val jumped = lastShown?.let { CarMapState.jumped(it, shown) } ?: false
+            lastShown = shown
+            val location = shown.toLocation()
+            map.locationComponent.forceLocationUpdate(location)
+            // A jump: MapLibre glides to a new position for as long as the gap since the last one (up to 2 s), the car
+            // sliding across the map. Fed again at once, that gap is nothing: the car is there
+            if (jumped) map.locationComponent.forceLocationUpdate(location)
             // The map opened before any position, far out: the first one brings it down to the car
-            if (!state.placed) state.camera(map, animate = true) else state.keepTracking(map, shown)
+            if (!state.placed) state.camera(map, animate = true) else state.keepTracking(map, shown, jumped)
         }
     }
 
@@ -395,23 +416,30 @@ fun CarMap(
         Navigation.state.map { it?.route }.distinctUntilChanged().collect { showRoute(loaded, it) }
     }
 
+    // The other routes offered when a trip starts, in grey under the one taken
+    LaunchedEffect(style, palette.map.puck) {
+        val loaded = style ?: return@LaunchedEffect
+        Navigation.alternatives.collect { showAlternatives(loaded, it, palette.map.puck) }
+    }
+
     // The next maneuver drawn on the road, as a factory navigation does: redrawn only when it changes
     LaunchedEffect(style) {
         val loaded = style ?: return@LaunchedEffect
         Navigation.state.map { s -> s?.next?.let { s.route to it } }.distinctUntilChanged().collect { showManeuver(loaded, it?.first, it?.second) }
     }
 
-    // The route in the focus colour; the car's arrow on it keeps a wide edge to stand apart
-    LaunchedEffect(style, palette.focus, palette.map.halo) {
+    // The route in its own blue (not the gold accent: it would melt into the motorways); the car's arrow on it
+    // keeps a wide edge to stand apart
+    LaunchedEffect(style, palette.map.route, palette.map.halo) {
         style?.let {
-            colorRoute(it, palette.focus, palette.map.halo)
-            it.addImage(MANEUVER_HEAD, arrowHeadBitmap(context, palette.focus))
+            colorRoute(it, palette.map.route, palette.map.halo)
+            it.addImage(MANEUVER_HEAD, arrowHeadBitmap(context, palette.map.route))
         }
     }
 
     // The car in the labels' grey (slate by day, light at night): it stands out on the blue route
-    LaunchedEffect(style, palette.text2, palette.map.halo) {
-        style?.addImage(PUCK, puckBitmap(context, arrow.value, palette.text2, palette.map.halo))
+    LaunchedEffect(style, palette.map.puck, palette.map.halo) {
+        style?.addImage(PUCK, puckBitmap(context, arrow.value, palette.map.puck, palette.map.halo))
     }
 
     LaunchedEffect(style, orientation) {
@@ -522,16 +550,45 @@ private fun showRoute(style: Style, route: NavRoute?) {
         val line = LineLayer(ROUTE_LINE, ROUTE_SOURCE).withProperties(
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND), PropertyFactory.lineWidth(width(22f, 4f)),
         )
-        if (style.getLayer(FIRST_LABEL) != null) {
-            style.addLayerBelow(casing, FIRST_LABEL)
-            style.addLayerBelow(line, FIRST_LABEL)
-        } else {
-            style.addLayer(casing)
-            style.addLayer(line)
+        // The traffic on top of the route, as Google Maps shows it: amber where slow, red where jammed
+        style.addSource(GeoJsonSource(TRAFFIC_SOURCE))
+        val traffic = LineLayer(TRAFFIC_LINE, TRAFFIC_SOURCE).withProperties(
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND), PropertyFactory.lineWidth(width(22f, 4f)),
+            PropertyFactory.lineColor(
+                Expression.switchCase(Expression.toBool(Expression.get("jam")), Expression.color(StopRed.toArgb()), Expression.color(WarningAmber.toArgb())),
+            ),
+        )
+        for (layer in listOf(casing, line, traffic)) {
+            if (style.getLayer(FIRST_LABEL) != null) style.addLayerBelow(layer, FIRST_LABEL) else style.addLayer(layer)
         }
     }
     source.setGeoJson(route?.let { lineGeoJson(it.points) } ?: EMPTY_FEATURES)
+    style.getSourceAs<GeoJsonSource>(TRAFFIC_SOURCE)?.setGeoJson(route?.let { trafficGeoJson(it.traffic) } ?: EMPTY_FEATURES)
 }
+
+/** The other routes offered, thinner and grey, under the route taken (or under the names before there is one). */
+private fun showAlternatives(style: Style, routes: List<NavRoute>, color: Color) {
+    val source = style.getSourceAs<GeoJsonSource>(ALT_SOURCE) ?: GeoJsonSource(ALT_SOURCE).also { s ->
+        style.addSource(s)
+        val width = Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(), Expression.stop(10, 3f), Expression.stop(18, 16f))
+        val line = LineLayer(ALT_LINE, ALT_SOURCE).withProperties(
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND), PropertyFactory.lineWidth(width),
+        )
+        when {
+            style.getLayer(ROUTE_CASING) != null -> style.addLayerBelow(line, ROUTE_CASING)
+            style.getLayer(FIRST_LABEL) != null -> style.addLayerBelow(line, FIRST_LABEL)
+            else -> style.addLayer(line)
+        }
+    }
+    style.getLayer(ALT_LINE)?.setProperties(PropertyFactory.lineColor(color.toArgb()), PropertyFactory.lineOpacity(0.7f))
+    source.setGeoJson(if (routes.isEmpty()) EMPTY_FEATURES else featureCollection(routes.map { lineGeoJson(it.points) }))
+}
+
+/** The traffic stretches as lines, each saying whether it is a jam. */
+private fun trafficGeoJson(stretches: List<TrafficStretch>): String =
+    featureCollection(stretches.map { lineGeoJson(it.points).replaceFirst(EMPTY_PROPERTIES, "\"properties\":{\"jam\":${it.jam}}") })
+
+private const val EMPTY_PROPERTIES = "\"properties\":{}"
 
 private fun colorRoute(style: Style, line: Color, casing: Color) {
     style.getLayer(ROUTE_LINE)?.setProperties(PropertyFactory.lineColor(line.toArgb()))
@@ -657,6 +714,10 @@ private const val EMPTY_FEATURES = """{"type":"FeatureCollection","features":[]}
 private const val ROUTE_SOURCE = "betterauto-route"
 private const val ROUTE_LINE = "betterauto-route-line"
 private const val ROUTE_CASING = "betterauto-route-casing"
+private const val TRAFFIC_SOURCE = "betterauto-traffic"
+private const val TRAFFIC_LINE = "betterauto-traffic-line"
+private const val ALT_SOURCE = "betterauto-alternatives"
+private const val ALT_LINE = "betterauto-alternatives-line"
 private const val MANEUVER_SOURCE = "betterauto-maneuver"
 private const val MANEUVER_LINE = "betterauto-maneuver-line"
 private const val MANEUVER_HEAD_SOURCE = "betterauto-maneuver-head"

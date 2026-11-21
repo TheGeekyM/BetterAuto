@@ -27,6 +27,9 @@ data class Maneuver(
     val exitIndex: Int? = null,
 )
 
+/** A stretch of the route in traffic (latitude, longitude pairs): slow, or a jam. */
+class TrafficStretch(val points: DoubleArray, val jam: Boolean)
+
 /**
  * A route to follow: its line (latitude, longitude pairs), the maneuvers along it, length and time. With stops it
  * is one leg per stop and one to the destination, joined: [legEnds] holds the last point of each.
@@ -39,6 +42,10 @@ class NavRoute(
     val legEnds: IntArray = intArrayOf(points.size / 2 - 1),
     /** Valhalla's seconds from the start to each point (each maneuver's time over its stretch); null without them. */
     private val secondsToPoint: DoubleArray? = null,
+    /** Where the traffic is slow or jammed (Google only). */
+    val traffic: List<TrafficStretch> = emptyList(),
+    /** The roads it takes, in a few words ("Ring Road"; Google only). */
+    val description: String? = null,
 ) {
     val size: Int get() = points.size / 2
     fun lat(i: Int) = points[2 * i]
@@ -52,7 +59,7 @@ class NavRoute(
     }
 
     /** The same route with other words for its maneuvers. */
-    fun withManeuvers(maneuvers: List<Maneuver>) = NavRoute(points, maneuvers, lengthM, durationS, legEnds, secondsToPoint)
+    fun withManeuvers(maneuvers: List<Maneuver>) = NavRoute(points, maneuvers, lengthM, durationS, legEnds, secondsToPoint, traffic, description)
 
     /**
      * Valhalla's time from the start to [alongM] metres along: a town stretch weighs more than as many metres of
@@ -190,7 +197,10 @@ class NavRoute(
         private const val ROUNDABOUT_EXIT = 27
 
         /** An encoded polyline with 6 decimals (Valhalla's) into latitude, longitude pairs. */
-        internal fun decodePolyline6(encoded: String): DoubleArray {
+        internal fun decodePolyline6(encoded: String): DoubleArray = decodePolyline(encoded, 1e6)
+
+        /** An encoded polyline into latitude, longitude pairs: [scale] 1e6 for Valhalla's, 1e5 for Google's. */
+        internal fun decodePolyline(encoded: String, scale: Double): DoubleArray {
             val out = ArrayList<Double>()
             var i = 0
             var lat = 0L
@@ -208,8 +218,8 @@ class NavRoute(
                     val delta = if (result and 1L != 0L) (result shr 1).inv() else result shr 1
                     if (axis == 0) lat += delta else lon += delta
                 }
-                out += lat / 1e6
-                out += lon / 1e6
+                out += lat / scale
+                out += lon / scale
             }
             return out.toDoubleArray()
         }

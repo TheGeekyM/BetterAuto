@@ -55,4 +55,31 @@ class PlaceSearchTest {
         val list = listOf(Destination("Roadhouse", "Via del Cantone", 43.8, 11.1), Destination("Casa", null, 43.0, 11.0))
         assertEquals(list, Destinations.decode(Destinations.encode(list)))
     }
+
+    @Test
+    fun mergeKeepsTheGeocoderFirstAndDropsTheSamePlace() {
+        val mall = Destination("Mall of Egypt", null, 29.9725, 31.0167)
+        val mallOsm = Destination("Roma Pizza - Mall of Egypt", null, 29.9727, 31.0168) // ~25 m away
+        val street = Destination("Abbas El Akkad", null, 30.0600, 31.3400)
+        val far = Destination("City Stars", null, 30.0730, 31.3460)
+        assertEquals(listOf(mall, street, far), PlaceSearch.merge(listOf(mall), listOf(mallOsm, street, far), 8))
+        assertEquals(listOf(mall, street), PlaceSearch.merge(listOf(mall), listOf(mallOsm, street, far), 2))
+        assertEquals(listOf(street), PlaceSearch.merge(emptyList(), listOf(street), 8))
+    }
+
+    @Test
+    fun googleAnswers() {
+        val json = """{"places":[
+            {"displayName":{"text":"Spinneys"},"formattedAddress":"Taha Hussein Rd, El Nozha, Cairo","location":{"latitude":30.1312,"longitude":31.3579}},
+            {"formattedAddress":"Street 9, Maadi, Cairo","location":{"latitude":29.96,"longitude":31.25}},
+            {"displayName":{"text":"No position"}}]}"""
+        assertEquals(
+            listOf(
+                Destination("Spinneys", "Taha Hussein Rd, El Nozha, Cairo", 30.1312, 31.3579),
+                Destination("Street 9, Maadi, Cairo", null, 29.96, 31.25),
+            ),
+            PlaceSearch.parseGoogle(json),
+        )
+        assertEquals(emptyList<Destination>(), PlaceSearch.parseGoogle("{}"))
+    }
 }

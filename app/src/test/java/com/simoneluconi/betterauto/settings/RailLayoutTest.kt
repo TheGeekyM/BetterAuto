@@ -20,7 +20,7 @@ class RailLayoutTest {
     fun itemsAddedLaterAreAppended() {
         // A layout saved before the vehicle and notifications items existed
         val old = RailLayout.decode("PHONE:BAR,HOME:BAR,MUSIC:HIDDEN,MAP:GROUP_2")
-        assertEquals(listOf(RailItem.PHONE, RailItem.HOME, RailItem.MUSIC, RailItem.MAP, RailItem.VEHICLE, RailItem.NOTIFICATIONS), old.map { it.item })
+        assertEquals(listOf(RailItem.PHONE, RailItem.HOME, RailItem.MUSIC, RailItem.MAP, RailItem.RADIO, RailItem.VEHICLE, RailItem.NOTIFICATIONS), old.map { it.item })
         assertEquals(RailSlot.HIDDEN, old.first { it.item == RailItem.MUSIC }.slot)
         assertEquals(RailSlot.HIDDEN, old.first { it.item == RailItem.NOTIFICATIONS }.slot)
     }

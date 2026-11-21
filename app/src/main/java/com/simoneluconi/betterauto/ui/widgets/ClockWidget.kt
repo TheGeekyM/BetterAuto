@@ -35,6 +35,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.LocalFormatLocale
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.vehicle.rememberUnits
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -65,8 +66,8 @@ fun ClockWidget(settings: LauncherSettings, modifier: Modifier = Modifier) {
 
     BoxWithConstraints(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(28.dp),
         contentAlignment = Alignment.Center,
     ) {

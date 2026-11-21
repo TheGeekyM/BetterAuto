@@ -1,5 +1,6 @@
 package com.simoneluconi.betterauto.aap
 
+import com.simoneluconi.betterauto.car.CarControl
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.car.VehicleData
 import com.simoneluconi.betterauto.exlap.ExlapClient
@@ -29,7 +30,11 @@ class VendorExtensionChannel(
 
     private val scope = channelScope(Dispatchers.Default)
 
+    /** Our own head unit app's channel: the car's climate, volume and tyres ([CarControl]). */
+    private val carControl = vendorName == CarControl.VENDOR_NAME
+
     override fun onOpened() {
+        if (carControl) return CarControl.attach(::sendRaw)
         when {
             exlap == null -> EventLog.log("Vendor extension \"$vendorName\" opened, not used")
             ExlapSettings.current?.enabled?.value != true -> EventLog.log("Exlap: off in the phone settings")
@@ -49,15 +54,17 @@ class VendorExtensionChannel(
     }
 
     override fun onChannelMessage(msg: AapMessage) {
-        if (exlap == null || ExlapSettings.current?.enabled?.value != true) return
+        if (!carControl && (exlap == null || ExlapSettings.current?.enabled?.value != true)) return
         // Raw bytes: the first two were read as a message id, put them back
         val raw = ByteArray(2 + msg.payload.size)
         putU16(raw, 0, msg.id)
         msg.payload.copyInto(raw, 2)
-        exlap.onText(raw.toString(Charsets.UTF_8))
+        val text = raw.toString(Charsets.UTF_8)
+        if (carControl) CarControl.onMessage(text) else exlap?.onText(text)
     }
 
     override fun close() {
+        if (carControl) CarControl.detach()
         scope.cancel()
         exlap?.stop()
     }

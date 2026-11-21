@@ -191,4 +191,69 @@ class HomeArrangementTest {
         assertEquals(ScreenShape.LANDSCAPE, ScreenShape.of(1000f, 1000f))
         assertEquals(ScreenShape.PORTRAIT, ScreenShape.of(700f, 1100f))
     }
+
+    @Test
+    fun theMainPlaceIsTheBiggest() {
+        // Out of the box: music on the big line, alone
+        assertEquals(0, HomeArrangement.default(ScreenShape.LANDSCAPE).mainPlace())
+        assertEquals(0, HomeArrangement.default(ScreenShape.PORTRAIT).mainPlace())
+        // All the same size: the first
+        assertEquals(0, home(false, listOf(listOf(music), listOf(clock)), listOf(listOf(map), listOf(calendar))).mainPlace())
+        // Alone on its line beats two sharing one of the same size
+        assertEquals(2, home(true, listOf(listOf(music), listOf(clock)), listOf(listOf(map))).mainPlace())
+        // Sizes dragged: the second place of the first line got the most of it
+        val dragged = home(true, listOf(listOf(music), listOf(clock)), listOf(listOf(map), listOf(calendar)))
+            .withPlaceShare(0, 0, 0.3f).withLineShare(0, 0.6f)
+        assertEquals(1, dragged.mainPlace())
+        // A hair apart is a tie, a float product's rounding never decides
+        val almost = HomeArrangement(false, listOf(HomeLine(listOf(HomePlace(listOf(music), 1f), HomePlace(listOf(clock), 1.0001f)))))
+        assertEquals(0, almost.mainPlace())
+    }
+
+    @Test
+    fun aTapMakesAWidgetMainAndKeepsTheSizes() {
+        val start = HomeArrangement.default(ScreenShape.LANDSCAPE)
+        val tapped = start.promoted(2)
+        assertEquals(listOf(notifications, clock, music), tapped.mains)
+        // The places keep their sizes: only what they hold changed
+        assertEquals(start.evenSizes().lines.map { it.places.size }, tapped.lines.map { it.places.size })
+        assertEquals(start.lines.map { it.weight }, tapped.lines.map { it.weight })
+        assertEquals(start.places.map { it.weight }, tapped.places.map { it.weight })
+        assertEquals(0, tapped.mainPlace())
+        // Saved and read back as it is
+        assertEquals(tapped, HomeArrangement.decode(tapped.encode()))
+        // The main one tapped again: nothing changes
+        assertSame(tapped, tapped.promoted(0))
+        assertSame(start, start.promoted(0))
+        // Out of range: nothing
+        assertSame(start, start.promoted(7))
+    }
+
+    @Test
+    fun aStackMovesWhole() {
+        val start = home(false, listOf(listOf(music)), listOf(listOf(map, weather), listOf(clock)))
+        val tapped = start.promoted(1)
+        assertEquals(listOf(map, weather), tapped.places[0].pages)
+        assertEquals(listOf(music), tapped.places[1].pages)
+        assertEquals(listOf(clock), tapped.places[2].pages)
+    }
+
+    @Test
+    fun aTapOnAFittedScreenSwapsTheSavedPlaces() {
+        // Three lines saved, a screen with room for two: the third line's place goes a swipe away in the second line
+        val saved = HomeArrangement(
+            true,
+            listOf(
+                HomeLine(listOf(HomePlace(listOf(music))), 2f),
+                HomeLine(listOf(HomePlace(listOf(clock)), HomePlace(listOf(notifications)))),
+                HomeLine(listOf(HomePlace(listOf(calendar)))),
+            ),
+        )
+        val shown = saved.fit(2, 2)
+        assertEquals(listOf(listOf(music), listOf(clock), listOf(notifications, calendar)), shown.places.map { it.pages })
+        // The driver taps the notifications (shown place 2): saved place 2 holds them
+        val tapped = saved.promoted(2, shown)
+        assertEquals(listOf(notifications, clock, music, calendar), tapped.mains)
+        assertEquals(listOf(listOf(notifications), listOf(clock), listOf(music, calendar)), tapped.fit(2, 2).places.map { it.pages })
+    }
 }

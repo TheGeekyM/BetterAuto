@@ -72,6 +72,7 @@ import com.simoneluconi.betterauto.ui.FocusMemory
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.verticalScrollWithBar
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -373,7 +374,7 @@ private fun RoundButton(icon: androidx.compose.ui.graphics.vector.ImageVector, l
     Box(
         Modifier
             .carClickable(CircleShape, label) { if (enabled) onClick() }
-            .background(colors.surface, CircleShape)
+            .glass(CircleShape)
             .size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -388,7 +389,7 @@ private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .carClickable(shape, text, onClick = onClick)
-            .background(if (selected) colors.focus.copy(alpha = 0.22f) else colors.surface, shape)
+            .background(if (selected) colors.accent.copy(alpha = 0.22f) else colors.surface, shape)
             .height(52.dp)
             .padding(horizontal = 20.dp),
         contentAlignment = Alignment.Center,
@@ -404,12 +405,12 @@ private fun Pill(text: String, primary: Boolean, modifier: Modifier = Modifier, 
     Box(
         modifier
             .carClickable(shape, text, onClick = onClick)
-            .background(if (primary) colors.focus else colors.surface2, shape)
+            .background(if (primary) colors.accent else colors.surface2, shape)
             .height(56.dp)
             .padding(horizontal = 28.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarLabel(text, 20.sp, if (primary) colors.bg else colors.text, weight = FontWeight.ExtraBold, maxLines = 1)
+        CarLabel(text, 20.sp, if (primary) colors.onAccent else colors.text, weight = FontWeight.ExtraBold, maxLines = 1)
     }
 }
 
@@ -437,8 +438,8 @@ private fun EditPlace(index: Int, place: HomePlace, moving: Int?, compact: Boole
         }
     }
     val card = Modifier
-        .background(colors.surface, shape)
-        .border(if (moving == index) 4.dp else 2.dp, if (moving == index) colors.focus else colors.line, shape)
+        .glass(shape)
+        .border(if (moving == index) 4.dp else 2.dp, if (moving == index) colors.accent else colors.line, shape)
         .padding(18.dp)
     Column(
         if (moving == null) {
@@ -483,7 +484,7 @@ private fun DropTargets(index: Int, home: HomeArrangement, drops: List<Pair<Home
                 Box(
                     modifier
                         .carClickable(shape, stringResource(R.string.home_drop_swap, other)) { onDrop(drop) }
-                        .background(colors.focus.copy(alpha = if (lit) 0.35f else 0.1f), shape),
+                        .background(colors.accent.copy(alpha = if (lit) 0.35f else 0.1f), shape),
                 )
             }
             is HomeDrop.Beside, is HomeDrop.NewLine -> {
@@ -495,15 +496,15 @@ private fun DropTargets(index: Int, home: HomeArrangement, drops: List<Pair<Home
                 Box(
                     modifier
                         .carClickable(shape, label) { onDrop(drop) }
-                        .background(if (lit) colors.focus else colors.surface, shape)
-                        .border(2.dp, colors.focus, shape),
+                        .background(if (lit) colors.accent else colors.surface, shape)
+                        .border(2.dp, colors.accent, shape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CarIcon(CarIcons.Plus, if (lit) colors.bg else colors.focus, Modifier.size(24.dp))
+                        CarIcon(CarIcons.Plus, if (lit) colors.onAccent else colors.accent, Modifier.size(24.dp))
                         // Only along a bar long enough to hold it
                         if (drop is HomeDrop.NewLine && box.width > box.height && box.width > 260f) {
-                            CarLabel(label, 18.sp, if (lit) colors.bg else colors.text, weight = FontWeight.Bold, maxLines = 1)
+                            CarLabel(label, 18.sp, if (lit) colors.onAccent else colors.text, weight = FontWeight.Bold, maxLines = 1)
                         }
                     }
                 }
@@ -543,8 +544,8 @@ private fun WidgetPicker(index: Int, shape: ScreenShape, settings: LauncherSetti
                 .widthIn(max = 640.dp)
                 .heightIn(max = 620.dp)
                 .shadow(24.dp, panelShape)
+                .glass(panelShape) { it.glass }
                 .clip(panelShape)
-                .background(colors.surface)
                 // A tap on the panel itself is not a tap outside
                 .pointerInput(Unit) { detectTapGestures { } }
                 .focusProperties { onExit = { if (requestedFocusDirection != FocusDirection.Enter) cancelFocusChange() } }
@@ -585,7 +586,7 @@ private fun WidgetPicker(index: Int, shape: ScreenShape, settings: LauncherSetti
                                 homeSetting.pick(settings, shape, index, choice, SettingsSurface.CAR)
                                 onClose()
                             }
-                            .background(if (selected) colors.focus.copy(alpha = 0.18f) else colors.surface2, rowShape)
+                            .background(if (selected) colors.accent.copy(alpha = 0.18f) else colors.surface2, rowShape)
                             .padding(horizontal = 18.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -597,7 +598,7 @@ private fun WidgetPicker(index: Int, shape: ScreenShape, settings: LauncherSetti
                                 CarLabel(stringResource(R.string.widget_in_place, it + 1), 17.sp, colors.text2)
                             }
                         }
-                        if (selected) CarIcon(CarIcons.Check, colors.focus, Modifier.size(28.dp))
+                        if (selected) CarIcon(CarIcons.Check, colors.accent, Modifier.size(28.dp))
                     }
                 }
             }

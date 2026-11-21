@@ -1,18 +1,28 @@
 package com.simoneluconi.betterauto.map.nav
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Geocoder
+import android.location.LocationManager
+import com.simoneluconi.betterauto.BuildConfig
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.map.MapLocation
 import com.simoneluconi.betterauto.map.distanceM
 import com.simoneluconi.betterauto.smarthome.SmartHome
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.IOException
 import java.net.URLDecoder
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /** A place found by a search: a [Destination] and how far it is from the car, when known. */
@@ -20,8 +30,11 @@ data class PlaceResult(val destination: Destination, val distanceM: Double?)
 
 /**
  * Finds places by name or address: shops, restaurants, cinemas ("Roadhouse", "Cinema Giometti") as well as
- * streets and towns. Photon (OpenStreetMap, https://photon.komoot.io) first, nearer places first; the phone's
- * own geocoder when Photon has nothing or can't be reached. Also reads what another app shares: map links,
+ * streets and towns. Asks two sources together, both near the car or else where the phone last was, and puts the
+ * two lists together: Google Places when the build has a key of its own (`betterauto.placesKey` in
+ * local.properties; the best where OpenStreetMap is thin), else the phone's geocoder (whichever the phone has: on a
+ * Chinese ROM Xiaomi's, which answers with places in China, so only what is near is kept); and Photon
+ * (OpenStreetMap, https://photon.komoot.io). Also reads what another app shares: map links,
  * coordinates, an address in a message, a contact card.
  */
 object PlaceSearch {
@@ -36,13 +49,49 @@ object PlaceSearch {
         val q = query.trim()
         if (q.isEmpty()) return@withContext emptyList()
         home(q)?.let { return@withContext listOf(PlaceResult(it, distanceFromCar(it))) }
-        val near = MapLocation.fix.value
-        val found = runCatching { photon(q, near?.latitude, near?.longitude, limit) }
-            .onFailure { EventLog.log("Navigation: place search failed (${it.message}), trying the phone's geocoder") }
-            .getOrNull().orEmpty()
-            .ifEmpty { geocoder(context, q, limit) }
-        found.map { PlaceResult(it, distanceFromCar(it)) }
+        // With no map on screen (the phone's search page) there is no fix: without a position the results would
+        // come from anywhere in the world
+        val near = MapLocation.fix.value?.let { it.latitude to it.longitude } ?: lastKnown(context)
+        val (google, osm) = coroutineScope {
+            val g = async {
+                if (BuildConfig.PLACES_KEY.isEmpty()) geocoder(context, q, limit, near)
+                else runCatching { google(context, q, near, limit) }
+                    .onFailure { EventLog.log("Navigation: Google Places search failed (${it.message})") }
+                    .getOrNull().orEmpty()
+            }
+            val p = async {
+                runCatching { photon(q, near?.first, near?.second, limit) }
+                    .onFailure { EventLog.log("Navigation: Photon search failed (${it.message})") }
+                    .getOrNull().orEmpty()
+            }
+            // A slow geocoder must not hold Photon's answer back (its blocking call just finishes unheard)
+            (withTimeoutOrNull(GEOCODER_WAIT_MS) { g.await() } ?: emptyList()) to p.await()
+        }
+        val first = if (BuildConfig.PLACES_KEY.isEmpty()) "phone geocoder" else "Google Places"
+        EventLog.log("Navigation: search found ${google.size} ($first) + ${osm.size} (Photon)")
+        merge(google, osm, limit).map { PlaceResult(it, distanceFromCar(it)) }
     }
+
+    /**
+     * [first] (Google's or the geocoder's, best for addresses), then the places of [second] that are not already there (within
+     * [SAME_PLACE_M]), at most [limit].
+     */
+    internal fun merge(first: List<Destination>, second: List<Destination>, limit: Int): List<Destination> {
+        val out = mutableListOf<Destination>()
+        for (d in first + second) {
+            if (out.size >= limit) break
+            if (out.none { distanceM(it.latitude, it.longitude, d.latitude, d.longitude) < SAME_PLACE_M }) out += d
+        }
+        return out
+    }
+
+    /** Where the phone last was, by any provider, when the map isn't following it. */
+    private fun lastKnown(context: Context): Pair<Double, Double>? = runCatching {
+        val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        lm.allProviders.mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
+            .maxByOrNull { it.elapsedRealtimeNanos }
+            ?.let { it.latitude to it.longitude }
+    }.getOrNull()
 
     /** "Casa" / "home": the home place of the linked smart home, when there is one. */
     private fun home(query: String): Destination? {
@@ -50,6 +99,49 @@ object PlaceSearch {
         val place = SmartHome.linked.value.firstNotNullOfOrNull { it.catalog.value?.home } ?: return null
         return Destination(place.name, null, place.latitude, place.longitude)
     }
+
+    /** Google Places (Text Search, New), near [near] when known. */
+    private fun google(context: Context, query: String, near: Pair<Double, Double>?, limit: Int): List<Destination> {
+        val body = JSONObject().put("textQuery", query).put("pageSize", limit)
+        near?.let { (lat, lon) ->
+            val center = JSONObject().put("latitude", lat).put("longitude", lon)
+            body.put("locationBias", JSONObject().put("circle", JSONObject().put("center", center).put("radius", GOOGLE_BIAS_M)))
+        }
+        val request = Request.Builder().url(GOOGLE_URL)
+            .header("X-Goog-Api-Key", BuildConfig.PLACES_KEY)
+            .header("X-Goog-FieldMask", "places.displayName,places.formattedAddress,places.location")
+            // What Google checks when the key is restricted to this app in the Cloud console
+            .header("X-Android-Package", context.packageName)
+            .apply { signingSha1(context)?.let { header("X-Android-Cert", it) } }
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { response ->
+            // Only the code: never the request, which carries the key
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            return parseGoogle(response.body?.string().orEmpty())
+        }
+    }
+
+    /** Google's Text Search answer into destinations: the name and the address under it. */
+    internal fun parseGoogle(json: String): List<Destination> {
+        val places = JSONObject(json).optJSONArray("places") ?: return emptyList()
+        return (0 until places.length()).mapNotNull { i ->
+            val p = places.getJSONObject(i)
+            val at = p.optJSONObject("location") ?: return@mapNotNull null
+            val address = p.optString("formattedAddress").ifBlank { null }
+            val name = p.optJSONObject("displayName")?.optString("text")?.ifBlank { null } ?: address ?: return@mapNotNull null
+            Destination(name, address?.takeIf { it != name }, at.getDouble("latitude"), at.getDouble("longitude"))
+        }
+    }
+
+    /** The SHA-1 of this APK's signing certificate, as Google expects it (hex, no colons). */
+    internal fun signingSha1(context: Context): String? = sha1 ?: runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        val cert = info.signingInfo?.apkContentsSigners?.firstOrNull() ?: return null
+        MessageDigest.getInstance("SHA-1").digest(cert.toByteArray()).joinToString("") { "%02X".format(it) }
+    }.getOrNull().also { sha1 = it }
+
+    @Volatile private var sha1: String? = null
 
     private fun photon(query: String, lat: Double?, lon: Double?, limit: Int): List<Destination> {
         val url = PHOTON_URL.toHttpUrl().newBuilder()
@@ -83,9 +175,17 @@ object PlaceSearch {
     }
 
     @Suppress("DEPRECATION") // the blocking call, on an IO thread: the listener version needs API 33
-    private fun geocoder(context: Context, query: String, limit: Int): List<Destination> = runCatching {
+    private fun geocoder(context: Context, query: String, limit: Int, near: Pair<Double, Double>?): List<Destination> = runCatching {
         if (!Geocoder.isPresent()) return emptyList()
-        Geocoder(context).getFromLocationName(query, limit).orEmpty().map { a ->
+        val geocoder = Geocoder(context)
+        // Within about 100 km (a box, as the geocoder takes no "near"); some geocoders ignore the box (Xiaomi's
+        // answers from China), so what is outside it is dropped. Anywhere only when the position is not known
+        val found = if (near == null) geocoder.getFromLocationName(query, limit).orEmpty() else {
+            val (lat, lon) = near
+            geocoder.getFromLocationName(query, limit, lat - NEAR_DEG, lon - NEAR_DEG, lat + NEAR_DEG, lon + NEAR_DEG).orEmpty()
+                .filter { kotlin.math.abs(it.latitude - lat) <= NEAR_DEG && kotlin.math.abs(it.longitude - lon) <= NEAR_DEG }
+        }
+        found.map { a ->
             val line = a.getAddressLine(0)
             Destination(a.featureName?.takeIf { it.any(Char::isLetter) } ?: line ?: query, line, a.latitude, a.longitude)
         }
@@ -170,8 +270,13 @@ object PlaceSearch {
     }
 
     private const val PHOTON_URL = "https://photon.komoot.io/api/"
+    private const val GOOGLE_URL = "https://places.googleapis.com/v1/places:searchText"
+    private const val GOOGLE_BIAS_M = 50_000.0
+    private const val SAME_PLACE_M = 50.0
+    private const val NEAR_DEG = 1.0
+    private const val GEOCODER_WAIT_MS = 4_000L
     private const val USER_AGENT = "BetterAuto (https://github.com/simoneluconi/BetterAuto)"
 
     /** What "home" is called in a voice command or a search, in the languages of the app. */
-    private val HomeWords = setOf("casa", "a casa", "home")
+    private val HomeWords = setOf("casa", "a casa", "home", "البيت", "بيتي", "المنزل")
 }

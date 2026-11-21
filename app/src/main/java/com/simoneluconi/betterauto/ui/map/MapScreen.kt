@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -66,6 +67,7 @@ import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.carZone
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /**
  * The Map section: the map following the car. The knob goes from the map to its buttons as on any screen (zoom by
@@ -85,6 +87,7 @@ fun MapScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
     val offer by Trip.offer.collectAsStateWithLifecycle()
     val guidance by settings.guidanceVoice.collectAsStateWithLifecycle()
     val planning by Navigation.planning.collectAsStateWithLifecycle()
+    val alternatives by Navigation.alternatives.collectAsStateWithLifecycle()
     val state = remember { CarMapState(zoom.level, tilt = SECTION_TILT) }
     LaunchedEffect(zoom) { state.setDefaultZoom(zoom.level) }
     var focused by remember { mutableStateOf(false) }
@@ -157,6 +160,10 @@ fun MapScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
                 PlanningCard(waiting, places, onRetry = { Navigation.retry() }, onEnd = { Navigation.end() })
             } else {
                 nav?.let { ManeuverCard(it, onEnd = { Navigation.end() }) }
+                // Other routes, offered for a while as the trip starts
+                nav?.takeIf { alternatives.isNotEmpty() }?.let {
+                    RouteChoiceCard(it.route, alternatives, onChoose = { r -> Navigation.chooseRoute(r) }, onKeep = { Navigation.dismissRoutes() })
+                }
             }
             MapStatus()
         }
@@ -179,8 +186,8 @@ fun MapScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
             CarLabel(
                 stringResource(R.string.map_knob_hint), 18.sp, colors.text, weight = FontWeight.Bold, maxLines = 1,
                 modifier = Modifier
+                    .glass(RoundedCornerShape(50)) { it.glass }
                     .clip(RoundedCornerShape(50))
-                    .background(colors.surface)
                     .padding(horizontal = 18.dp, vertical = 8.dp),
             )
         }
@@ -208,7 +215,7 @@ fun MapScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
                 MapButton(CarIcons.Search, stringResource(R.string.nav_destinations), BUTTON_SIZE, CircleShape) { panelOpen = true }
                 // Not clipped: the focus ring of either button is drawn just outside the pill
                 Column(
-                    Modifier.background(colors.surface, RoundedCornerShape(BUTTON_SIZE / 2)),
+                    Modifier.shadow(6.dp, RoundedCornerShape(BUTTON_SIZE / 2), clip = false).glass(RoundedCornerShape(BUTTON_SIZE / 2)) { it.glass },
                 ) {
                     MapButton(CarIcons.Plus, stringResource(R.string.map_zoom_in), BUTTON_SIZE, null) { zoomBy(state, 1.0) }
                     Box(Modifier.width(BUTTON_SIZE).padding(horizontal = 12.dp).height(1.dp).background(colors.line))
@@ -277,8 +284,8 @@ internal fun MapStatus(modifier: Modifier = Modifier, compact: Boolean = false) 
     val warning = current != null
     Row(
         modifier
+            .glass(RoundedCornerShape(50)) { it.glass }
             .clip(RoundedCornerShape(50))
-            .background(colors.surface)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -298,7 +305,7 @@ internal fun MapAttribution(modifier: Modifier = Modifier) {
         stringResource(if (routed) R.string.map_attribution_route else R.string.map_attribution), 11.sp, colors.text2, maxLines = 1,
         modifier = modifier
             .clip(RoundedCornerShape(50))
-            .background(colors.surface.copy(alpha = 0.75f))
+            .background(colors.glass.copy(alpha = colors.glass.alpha * 0.8f))
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )
 }
@@ -316,7 +323,7 @@ private fun MapButton(icon: ImageVector, label: String, size: Dp, shape: Shape?,
         Modifier
             .size(size)
             .carClickable(shape ?: CircleShape, label, onClick = onTap)
-            .then(if (shape != null) Modifier.clip(shape).background(colors.surface) else Modifier),
+            .then(if (shape != null) Modifier.shadow(6.dp, shape, clip = false).glass(shape) { it.glass } else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         CarIcon(icon, colors.text, Modifier.size(30.dp))

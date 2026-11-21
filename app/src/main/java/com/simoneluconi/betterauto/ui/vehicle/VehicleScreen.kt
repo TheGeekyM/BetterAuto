@@ -59,13 +59,17 @@ import com.simoneluconi.betterauto.ui.LocalFormatLocale
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.widgets.PanelMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.Locale
 
-/** Amber of the instrument cluster's engine warning light. */
-internal val WarningAmber = Color(0xFFF5A524)
-private val StopRed = Color(0xFFE5484D)
+/**
+ * Amber of the instrument cluster's engine warning light, on the orange side: the theme's gold accent (what is
+ * selected or plays) is a yellow amber, and a warning must not read as a selection.
+ */
+internal val WarningAmber = Color(0xFFFF8A1F)
+internal val StopRed = Color(0xFFE5484D)
 
 /** Opens the vehicle screen straight on its diagnostics (from the status bar engine light). */
 object VehicleScreenState {
@@ -108,8 +112,8 @@ fun VehicleScreen(modifier: Modifier = Modifier) {
 
     Column(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

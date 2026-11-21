@@ -80,6 +80,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.verticalScrollWithBar
 import com.simoneluconi.betterauto.ui.widgets.HomeEdit
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,7 +112,7 @@ fun SettingsScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
 @Composable
 private fun StoppedOnly(modifier: Modifier) {
     val colors = LocalCarColors.current
-    Box(modifier.clip(RoundedCornerShape(28.dp)).background(colors.surface).padding(18.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.glass(RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp)).padding(18.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(Modifier.size(72.dp).background(colors.surface2, CircleShape), contentAlignment = Alignment.Center) {
                 CarIcon(CarIcons.Car, colors.text2, Modifier.size(34.dp))
@@ -189,8 +190,8 @@ private fun CategoryList(
     val colors = LocalCarColors.current
     Column(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .focusProperties { onExit = { if (requestedFocusDirection == FocusDirection.Next || requestedFocusDirection == FocusDirection.Previous) cancelFocusChange() } }
             .focusGroup()
             .onPreviewKeyEvent { event ->
@@ -218,7 +219,7 @@ private fun CategoryList(
                         if (it.isFocused && wide) CarSettingsNav.category.value = category
                     }
                     .carClickable(shape, stringResource(category.title)) { onOpen(category, focused) }
-                    .background(if (isSelected && wide) colors.focus.copy(alpha = 0.18f) else Color.Transparent, shape)
+                    .background(if (isSelected && wide) colors.accent.copy(alpha = 0.18f) else Color.Transparent, shape)
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -276,8 +277,8 @@ private fun CategoryPane(
     }
     Column(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .focusProperties { onExit = { if (requestedFocusDirection == FocusDirection.Next || requestedFocusDirection == FocusDirection.Previous) cancelFocusChange() } }
             .focusGroup()
             .onPreviewKeyEvent { event ->
@@ -361,7 +362,7 @@ private fun TitleBlock(title: String, description: String, note: String?, modifi
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         CarLabel(title, 21.sp, colors.text, weight = FontWeight.Bold, maxLines = 2)
         CarLabel(description, 17.sp, colors.text2, maxLines = 4, lineHeight = 23.sp)
-        note?.let { CarLabel(it, 17.sp, colors.focus, weight = FontWeight.Bold, maxLines = 2) }
+        note?.let { CarLabel(it, 17.sp, colors.accent, weight = FontWeight.Bold, maxLines = 2) }
     }
 }
 
@@ -405,12 +406,12 @@ internal fun Switch(on: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier
             .size(width = 66.dp, height = 38.dp)
-            .background(if (on) colors.focus else colors.surface2, RoundedCornerShape(50))
-            .border(1.dp, if (on) colors.focus else colors.line, RoundedCornerShape(50))
+            .background(if (on) colors.accent else colors.surface2, RoundedCornerShape(50))
+            .border(1.dp, if (on) colors.accent else colors.line, RoundedCornerShape(50))
             .padding(5.dp),
         contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        Box(Modifier.size(28.dp).background(if (on) colors.bg else colors.text2, CircleShape))
+        Box(Modifier.size(28.dp).background(if (on) colors.onAccent else colors.text2, CircleShape))
     }
 }
 
@@ -432,7 +433,7 @@ private fun <T> ChoiceRow(item: ChoiceSetting<T>, settings: LauncherSettings, fo
                     Modifier
                         .then(if (isSelected) focus else Modifier)
                         .carClickable(shape, stringResource(R.string.settings_option, title, label)) { item.select(settings, option.value, SettingsSurface.CAR) }
-                        .background(if (isSelected) colors.focus.copy(alpha = 0.22f) else colors.surface2, shape)
+                        .background(if (isSelected) colors.accent.copy(alpha = 0.22f) else colors.surface2, shape)
                         .height(58.dp)
                         .padding(horizontal = 26.dp),
                     contentAlignment = Alignment.Center,
@@ -536,7 +537,7 @@ private fun TickRow(label: String, ticked: Boolean, entry: FocusRequester?, lead
             .fillMaxWidth()
             .then(if (entry != null) Modifier.focusRequester(entry) else Modifier)
             .carClickable(RowShape, stringResource(R.string.settings_option, label, stringResource(if (ticked) R.string.option_on else R.string.option_off)), onClick = onClick)
-            .background(if (ticked) colors.focus.copy(alpha = 0.14f) else colors.surface2, RowShape)
+            .background(if (ticked) colors.accent.copy(alpha = 0.14f) else colors.surface2, RowShape)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -549,11 +550,11 @@ private fun TickRow(label: String, ticked: Boolean, entry: FocusRequester?, lead
             Box(
                 Modifier
                     .size(36.dp)
-                    .background(if (ticked) colors.focus else Color.Transparent, CircleShape)
-                    .border(2.dp, if (ticked) colors.focus else colors.line, CircleShape),
+                    .background(if (ticked) colors.accent else Color.Transparent, CircleShape)
+                    .border(2.dp, if (ticked) colors.accent else colors.line, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                if (ticked) CarIcon(CarIcons.Check, colors.bg, Modifier.size(22.dp))
+                if (ticked) CarIcon(CarIcons.Check, colors.onAccent, Modifier.size(22.dp))
             }
         }
     }

@@ -47,9 +47,11 @@ class InputChannel(
                 projection.dispatchKey(key.keycode, key.down, key.longpress)
             }
         }
+        if (report.hasAbsoluteEvent()) EventLog.log("Input: absolute ${report.absoluteEvent.dataList.map { it.keycode to it.value }}")
         if (report.hasRelativeEvent()) {
             for (rel in report.relativeEvent.dataList) {
                 if (rel.keycode == KEYCODE_ROTARY_CONTROLLER) projection.dispatchRotary(rel.delta)
+                else EventLog.log("Input: relative ${rel.keycode} by ${rel.delta}")
             }
         }
     }

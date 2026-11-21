@@ -57,6 +57,9 @@ private const val MIN_PRESS_MS = 120L
 /** Holding the knob's center (or enter) this long is a long press, as holding a finger is. */
 private const val KEY_LONG_PRESS_MS = 600L
 
+/** A second press of the knob's center within this long after the first is a double press. */
+private const val KEY_DOUBLE_PRESS_MS = 400L
+
 /**
  * What holding a control does when it has no long press of its own: a home widget's controls edit the
  * home screen. Without it, holding is just a slow tap.
@@ -89,13 +92,16 @@ private const val MAX_FOCUS_GROW = 0.03f
  * A control usable both by touch and by the car's rotary/d-pad: always focusable (touch mode or not),
  * activated by tap or by the center/enter key, with a clear focus ring and slight zoom when focused,
  * and a short press-in (shrink + veil) on every press so the driver sees it registered.
- * [onLongClick] (else [LocalHoldAction]) runs on a held finger or a held center key; the release then
- * doesn't also click.
+ * [onLongClick] (else [LocalHoldAction]) runs on a held finger or a held center key ([onKeyHold] for the key when
+ * it differs); the release then doesn't also click. With [onDoubleClick] a second tap (or center press) soon after
+ * the first runs that instead: the single [onClick] then waits for the double-tap time, so a double never clicks first.
  */
 fun Modifier.carClickable(
     shape: Shape,
     label: String,
     onLongClick: (() -> Unit)? = null,
+    onKeyHold: (() -> Unit)? = null,
+    onDoubleClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
     val interaction = remember { MutableInteractionSource() }
@@ -111,6 +117,11 @@ fun Modifier.carClickable(
     val veil by animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 60 else 260), label = "pressVeil")
     val click by rememberUpdatedState(onClick)
     val longClick by rememberUpdatedState(onLongClick ?: LocalHoldAction.current)
+    val keyHoldAction by rememberUpdatedState(onKeyHold ?: onLongClick ?: LocalHoldAction.current)
+    val doubleClick by rememberUpdatedState(onDoubleClick)
+    val hasDouble = onDoubleClick != null
+    // A first center press waiting to see whether a second one comes
+    var pendingPress by remember { mutableStateOf<Job?>(null) }
     var keyHold by remember { mutableStateOf<Job?>(null) }
     var heldLong by remember { mutableStateOf(false) }
     // A release whose press went to another control (a hold that opened this one) is not a click
@@ -119,11 +130,30 @@ fun Modifier.carClickable(
     // Once per hold, from the timer or from the car's own long-press flag, whichever comes first
     fun keyLongPress(keyCode: Int) {
         if (heldLong) return
-        val action = longClick ?: return
+        val action = keyHoldAction ?: return
         heldLong = true
         keyHold?.cancel()
         EventLog.log("Input: key $keyCode long press")
         action()
+    }
+
+    // A center press: at once, or with a double press possible, once it is clear no second one follows
+    fun keyClick() {
+        val double = doubleClick
+        val waiting = pendingPress
+        when {
+            double == null -> click()
+            waiting?.isActive == true -> {
+                waiting.cancel()
+                pendingPress = null
+                double()
+            }
+            else -> pendingPress = scope.launch {
+                delay(KEY_DOUBLE_PRESS_MS)
+                pendingPress = null
+                click()
+            }
+        }
     }
 
     fun press() {
@@ -157,15 +187,20 @@ fun Modifier.carClickable(
                 drawOutline(shape.createOutline(size, layoutDirection, this), colors.text.copy(alpha = 0.14f * veil))
             }
             if (focused) {
-                // Solid ring just outside the control, then a soft halo band outside the ring:
-                // 6 dp in all, so it stays within the gap to the next control
+                // A thin dark gap, the solid ring, then a soft halo band outside it: 6 dp in all, so it stays
+                // within the gap to the next control. The gap keeps the gold ring apart from a gold control
+                // (the play button, a selected chip), which would otherwise only look a little bigger
+                val gap = 1.5.dp.toPx()
                 val ring = 3.dp.toPx()
                 val halo = 6.dp.toPx()
-                drawRingOutside(shape, ring / 2, ring) { outline, stroke ->
+                drawRingOutside(shape, gap / 2, gap) { outline, stroke ->
+                    drawOutline(outline, colors.bg, style = stroke)
+                }
+                drawRingOutside(shape, gap + ring / 2, ring) { outline, stroke ->
                     drawOutline(outline, colors.focus, style = stroke)
                 }
-                drawRingOutside(shape, (ring + halo) / 2, halo - ring) { outline, stroke ->
-                    drawOutline(outline, colors.focus.copy(alpha = 0.28f), style = stroke)
+                drawRingOutside(shape, (gap + ring + halo) / 2, halo - gap - ring) { outline, stroke ->
+                    drawOutline(outline, colors.focus.copy(alpha = 0.3f), style = stroke)
                 }
             }
         }
@@ -183,7 +218,7 @@ fun Modifier.carClickable(
                         keyDown = true
                         press()
                         heldLong = false
-                        if (longClick != null) keyHold = scope.launch {
+                        if (keyHoldAction != null) keyHold = scope.launch {
                             delay(KEY_LONG_PRESS_MS)
                             keyLongPress(native.keyCode)
                         }
@@ -196,7 +231,7 @@ fun Modifier.carClickable(
                     keyHold = null
                     if (keyDown) {
                         release()
-                        if (!heldLong) click()
+                        if (!heldLong) keyClick()
                     }
                     keyDown = false
                     heldLong = false
@@ -207,13 +242,15 @@ fun Modifier.carClickable(
         .focusRequester(self)
         .onFocusChanged { if (it.isFocused) FocusMemory.focused(self) }
         .focusable(interactionSource = interaction)
-        .pointerInput(Unit) {
+        .pointerInput(hasDouble) {
             detectTapGestures(
                 onPress = {
                     press()
                     tryAwaitRelease()
                     release()
                 },
+                // Given, it makes the single tap wait for the double-tap time
+                onDoubleTap = if (hasDouble) { _ -> doubleClick?.invoke() } else null,
                 onTap = { click() },
                 onLongPress = { longClick?.invoke() ?: click() },
             )

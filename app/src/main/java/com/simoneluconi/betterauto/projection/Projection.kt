@@ -48,6 +48,11 @@ class Projection(val context: Context) {
             LauncherSettings.get(context).onSessionStart()
             NowPlaying.acquire(context) // released by stop(), which checks for a presentation
             CarNotifications.acquire()
+            // Messages read aloud and callers announced, while this car screen is up
+            com.simoneluconi.betterauto.voice.MessageReader.start(context)
+            com.simoneluconi.betterauto.voice.CallAnnouncer.start(context)
+            // "hi batata", while the setting is on
+            com.simoneluconi.betterauto.voice.wake.WakeListener.start(context)
             EventLog.log("Projection started: ${width}x$height @ $densityDpi dpi")
         } catch (e: Exception) {
             EventLog.log("Projection failed: $e")
@@ -71,6 +76,9 @@ class Projection(val context: Context) {
         if (presentation != null) {
             NowPlaying.release()
             CarNotifications.release()
+            com.simoneluconi.betterauto.voice.MessageReader.stop()
+            com.simoneluconi.betterauto.voice.CallAnnouncer.stop()
+            com.simoneluconi.betterauto.voice.wake.WakeListener.stop()
         }
         presentation?.dismiss()
         presentation = null

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.simoneluconi.betterauto.audio.ShizukuAudio
+import com.simoneluconi.betterauto.transport.wireless.WifiPairing
 import com.simoneluconi.betterauto.transport.wireless.WirelessAutoConnect
 import com.simoneluconi.betterauto.transport.wireless.WirelessConnector
 import com.simoneluconi.betterauto.transport.wireless.WirelessState
@@ -52,6 +53,7 @@ import com.simoneluconi.betterauto.ui.CarIcon
 import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.verticalScrollWithBar
 import kotlin.concurrent.thread
 
@@ -67,8 +69,8 @@ internal fun WirelessCard(onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .clickable(onClick = onClick)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -90,7 +92,7 @@ internal fun WirelessCard(onClick: () -> Unit) {
  * keeps working as before and wins when plugged in.
  */
 @Composable
-internal fun WirelessPage(onBack: () -> Unit) {
+internal fun WirelessPage(pairWifi: Boolean = false, onPairAsked: () -> Unit = {}, onBack: () -> Unit) {
     val colors = LocalCarColors.current
     val context = LocalContext.current
     var refresh by remember { mutableIntStateOf(0) }
@@ -148,6 +150,7 @@ internal fun WirelessPage(onBack: () -> Unit) {
                 PillButton(stringResource(R.string.wireless_show_all, hidden), primary = false) { showAll = true }
             }
             if (WirelessAutoConnect.supported()) selected?.let { AutoConnectCard(it) { watched = WirelessAutoConnect.watched(context) } }
+            WifiPairingCard(pairWifi, onPairAsked)
             if (missing.isEmpty()) DualWifiCard()
         }
 
@@ -226,6 +229,62 @@ private fun AutoConnectCard(address: String, onChange: () -> Unit) {
 }
 
 /**
+ * The car's WiFi paired with BetterAuto ([WifiPairing]): Android then joins it without its dialog. Shown once
+ * the head unit has described its WiFi (the first connection); [start]: opened from the notification that
+ * asks for it, so the pairing begins by itself ([onStarted] then).
+ */
+@Composable
+private fun WifiPairingCard(start: Boolean, onStarted: () -> Unit) {
+    val colors = LocalCarColors.current
+    val context = LocalContext.current
+    var refresh by remember { mutableIntStateOf(0) }
+    val point = remember(refresh) { WifiPairing.known(context) }
+    val paired = remember(refresh, point) { WifiPairing.isPaired(context, point?.bssid) }
+    var busy by remember { mutableStateOf(false) }
+    val dialog = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        WifiPairing.finished(context, result.resultCode == Activity.RESULT_OK)
+        busy = false
+        refresh++
+    }
+    fun pair() {
+        busy = true
+        WifiPairing.pair(
+            context,
+            onDialog = { dialog.launch(IntentSenderRequest.Builder(it).build()) },
+            onDone = {
+                busy = false
+                refresh++
+            },
+        )
+    }
+    LaunchedEffect(start) {
+        if (!start) return@LaunchedEffect
+        onStarted()
+        if (point != null && !paired) pair()
+    }
+    Card {
+        CarLabel(stringResource(R.string.wireless_pair_title), 18.sp, colors.text, weight = FontWeight.Bold)
+        CarLabel(stringResource(R.string.wireless_pair_hint), 15.sp, colors.text2, maxLines = 8, lineHeight = 21.sp)
+        if (point == null) {
+            CarLabel(stringResource(R.string.wireless_pair_unknown), 15.sp, colors.text2, maxLines = 3)
+            return@Card
+        }
+        val state = if (paired) R.string.wireless_pair_done else R.string.wireless_pair_not_yet
+        CarLabel(stringResource(state, point.ssid), 16.sp, colors.text, weight = FontWeight.Bold, maxLines = 2)
+        if (paired) {
+            PillButton(stringResource(R.string.wireless_pair_remove), primary = false) {
+                WifiPairing.unpair(context)
+                refresh++
+            }
+        } else {
+            PillButton(stringResource(R.string.wireless_pair_action), primary = true, modifier = Modifier.alpha(if (busy) 0.5f else 1f)) {
+                if (!busy) pair()
+            }
+        }
+    }
+}
+
+/**
  * Dual WiFi: the phone keeps its own WiFi (and internet, adb) while on the head unit's. A setting only the
  * shell user can change, so it needs Shizuku: without it the card is there but cannot be switched on.
  */
@@ -295,17 +354,17 @@ private fun DeviceRow(device: Paired, chosen: Boolean, auto: Boolean, onClick: (
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(if (chosen) colors.focus.copy(alpha = 0.16f) else colors.surface)
+            .background(if (chosen) colors.accent.copy(alpha = 0.16f) else colors.surface)
             .clickable(onClick = onClick)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            Modifier.size(44.dp).background(if (chosen) colors.focus else colors.surface2, CircleShape),
+            Modifier.size(44.dp).background(if (chosen) colors.accent else colors.surface2, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            CarIcon(if (chosen) CarIcons.Check else CarIcons.Wireless, if (chosen) Color.White else colors.text2, Modifier.size(22.dp))
+            CarIcon(if (chosen) CarIcons.Check else CarIcons.Wireless, if (chosen) colors.onAccent else colors.text2, Modifier.size(22.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             CarLabel(device.name, 17.sp, colors.text, weight = FontWeight.Bold, maxLines = 2)
@@ -329,8 +388,8 @@ private fun Card(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) { content() }

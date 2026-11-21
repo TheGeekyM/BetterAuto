@@ -45,6 +45,7 @@ import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.LocalFormatLocale
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
@@ -82,8 +83,8 @@ fun CalendarWidget(settings: LauncherSettings, modifier: Modifier = Modifier) {
 
     BoxWithConstraints(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(24.dp)
     ) {
         val compact = maxHeight < 260.dp
@@ -162,7 +163,7 @@ private fun EventRow(event: AgendaEvent, h24: Boolean) {
             Modifier
                 .width(6.dp)
                 .fillMaxHeight(0.8f)
-                .background(instance.color?.let { Color(it).copy(alpha = 1f) } ?: colors.focus, RoundedCornerShape(50))
+                .background(instance.color?.let { Color(it).copy(alpha = 1f) } ?: colors.accent, RoundedCornerShape(50))
         )
         Column(Modifier.widthIn(min = 96.dp)) {
             CarLabel(first, 20.sp, colors.text, weight = FontWeight.Bold, tabularNumbers = true)

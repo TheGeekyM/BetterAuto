@@ -81,6 +81,7 @@ import com.simoneluconi.betterauto.ui.CarLabel
 import com.simoneluconi.betterauto.ui.carClickable
 import com.simoneluconi.betterauto.ui.launcher.contentFocus
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 import com.simoneluconi.betterauto.ui.widgets.ListRow
 import com.simoneluconi.betterauto.ui.widgets.PanelMessage
 import kotlinx.coroutines.launch
@@ -107,8 +108,8 @@ fun PhoneScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
 
     Column(
         modifier
+            .glass(RoundedCornerShape(32.dp))
             .clip(RoundedCornerShape(32.dp))
-            .background(colors.surface)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -124,7 +125,7 @@ fun PhoneScreen(settings: LauncherSettings, modifier: Modifier = Modifier) {
                             picking = null
                             settings.setPhoneTab(value.name)
                         }
-                        .background(if (tab == value) colors.focus.copy(alpha = 0.22f) else colors.surface2, shape)
+                        .background(if (tab == value) colors.accent.copy(alpha = 0.22f) else colors.surface2, shape)
                         .height(60.dp)
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -288,7 +289,7 @@ private fun ContactsList(settings: LauncherSettings, onPick: (Contact) -> Unit) 
                                 letter = initial
                                 index++
                                 item(key = "letter-$initial") {
-                                    CarLabel(initial.toString(), 22.sp, colors.focus, Modifier.padding(start = 18.dp, top = 6.dp), weight = FontWeight.ExtraBold)
+                                    CarLabel(initial.toString(), 22.sp, colors.accent, Modifier.padding(start = 18.dp, top = 6.dp), weight = FontWeight.ExtraBold)
                                 }
                             }
                             val position = index++

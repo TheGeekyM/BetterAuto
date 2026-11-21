@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import com.simoneluconi.betterauto.EventLog
 import com.simoneluconi.betterauto.R
+import com.simoneluconi.betterauto.audio.CarVoice
 import com.simoneluconi.betterauto.map.MapFix
 import com.simoneluconi.betterauto.map.MapLocation
 import com.simoneluconi.betterauto.map.MapSource
@@ -13,6 +14,10 @@ import com.simoneluconi.betterauto.map.bearingDeg
 import com.simoneluconi.betterauto.map.distanceM
 import com.simoneluconi.betterauto.map.turnDeg
 import com.simoneluconi.betterauto.settings.AppLocales
+import com.simoneluconi.betterauto.voice.ClipPlayer
+import com.simoneluconi.betterauto.voice.Speech
+import com.simoneluconi.betterauto.voice.TtsToPcm
+import com.simoneluconi.betterauto.voice.VoiceClips
 import com.simoneluconi.betterauto.settings.GuidanceVoice
 import com.simoneluconi.betterauto.settings.LauncherSettings
 import kotlinx.coroutines.CancellationException
@@ -78,8 +83,8 @@ enum class RoutePlanning { CALCULATING, NO_ROUTE, OFFLINE }
  * Everything on the main thread (the work per position is small; the network has its own threads), so the
  * state, the voice and the trip are never changed from two threads at once.
  *
- * The route comes from the public demonstration server of Valhalla (OpenStreetMap data): for trying it on the
- * bench only, the source for everyday use is still to be chosen.
+ * The route comes from Google's Routes API, with the traffic, when the build has a Google key ([GoogleRoutes]);
+ * otherwise, or with Google out of reach, from Valhalla (the driver's server, or the public demonstration one).
  */
 object Navigation {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -92,6 +97,13 @@ object Navigation {
     val planning: StateFlow<RoutePlanning?> = _planning
 
     private val retrySignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    private val _alternatives = MutableStateFlow<List<NavRoute>>(emptyList())
+
+    /** Other routes for the trip just started (Google's), offered a while: [chooseRoute] takes one. */
+    val alternatives: StateFlow<List<NavRoute>> = _alternatives
+    private var offerJob: Job? = null
+    private var routedPlaces: List<Destination> = emptyList()
 
     private var screens = 0
     private var watch: Job? = null
@@ -180,6 +192,23 @@ object Navigation {
         if (job != null) retrySignal.tryEmit(Unit)
     }
 
+    /** The driver picks one of the [alternatives]. Main thread. */
+    fun chooseRoute(route: NavRoute) {
+        if (route !in _alternatives.value) return
+        dismissRoutes()
+        EventLog.log("Navigation: another route chosen${route.description?.let { ", via $it" } ?: ""}")
+        adopt(route, routedPlaces, speakFirst = true)
+        // The car drove on while the driver chose: found anywhere along the new route, not only near its start
+        offRouteFixes = OFF_ROUTE_FIXES
+    }
+
+    /** No other route, thanks (or the offer is over). */
+    fun dismissRoutes() {
+        offerJob?.cancel()
+        offerJob = null
+        _alternatives.value = emptyList()
+    }
+
     private fun follow(resumed: Boolean) {
         val context = appContext ?: return
         // Guidance needs the position even with no map on screen
@@ -213,14 +242,21 @@ object Navigation {
                 // A trip being edited (a stop dragged place by place) is routed once, when it settles
                 if (!firstTrip) delay(TRIP_SETTLE_MS)
                 firstTrip = false
-                routeUntilFound(places, speakFirst = !quiet)
+                routeUntilFound(places, speakFirst = !quiet, offer = true)
                 quiet = false
+                launch {
+                    while (true) {
+                        delay(TRAFFIC_CHECK_MS)
+                        checkFaster(places)
+                    }
+                }
                 MapLocation.fix.filterNotNull().conflate().collect { onFix(it, places) }
             }
         }
     }
 
     private fun pause() {
+        dismissRoutes()
         arrivalJob?.cancel()
         arrivalJob = null
         _planning.value = null
@@ -243,10 +279,10 @@ object Navigation {
      * Routes until a route is found: with no route at all, waits for the driver to ask again ([retry]); with the
      * server out of reach, tries again later and later (or at once when asked).
      */
-    private suspend fun routeUntilFound(places: List<Destination>, speakFirst: Boolean) {
+    private suspend fun routeUntilFound(places: List<Destination>, speakFirst: Boolean, offer: Boolean = false) {
         var wait = RETRY_MS
         while (true) {
-            when (route(waitForFix(), places, speakFirst)) {
+            when (route(waitForFix(), places, speakFirst, offer)) {
                 RouteResult.FOUND -> return
                 RouteResult.NO_ROUTE -> {
                     // Nothing to follow: the old route would lead to the old trip
@@ -267,15 +303,21 @@ object Navigation {
 
     private enum class RouteResult { FOUND, NO_ROUTE, FAILED }
 
-    /** A new route from [from] through [places]; why not when none could be had (logged). */
-    private suspend fun route(from: MapFix, places: List<Destination>, speakFirst: Boolean = true): RouteResult {
+    /**
+     * A new route from [from] through [places]; why not when none could be had (logged). [offer]: the other routes
+     * found offered to the driver for a while.
+     */
+    private suspend fun route(from: MapFix, places: List<Destination>, speakFirst: Boolean = true, offer: Boolean = false): RouteResult {
         val context = appContext ?: return RouteResult.FAILED
+        dismissRoutes()
         _state.value = _state.value?.copy(rerouting = true)
         val server = LauncherSettings.get(context).routeServer.value
+        var others = emptyList<NavRoute>()
         val route = try {
-            val text = requestRoute(server, from, places, AppLocales.voice(context).toLanguageTag())
-            val raw = withContext(Dispatchers.Default) { NavRoute.fromValhalla(text) }
+            val routes = fetchRoute(context, server, from, places, alternatives = offer)
+            val raw = routes.first()
             if (raw.size < 2) throw RouteRefused("an empty route")
+            others = routes.drop(1).filter { it.size >= 2 }.map { withStopNames(context, it, places) }
             withStopNames(context, raw, places)
         } catch (e: CancellationException) {
             throw e
@@ -290,6 +332,22 @@ object Navigation {
             return RouteResult.FAILED
         }
         EventLog.log("Navigation: route of ${(route.lengthM / 1000).format1()} km, ${route.maneuvers.size} maneuvers, ${places.size - 1} stop(s)")
+        routedPlaces = places
+        adopt(route, places, speakFirst)
+        if (others.isNotEmpty()) {
+            EventLog.log("Navigation: ${others.size} other route(s) offered")
+            _alternatives.value = others
+            offerJob = scope.launch {
+                delay(ROUTE_OFFER_MS)
+                offerJob = null
+                _alternatives.value = emptyList()
+            }
+        }
+        return RouteResult.FOUND
+    }
+
+    /** Follows [route] from its start (where the car is now). */
+    private fun adopt(route: NavRoute, places: List<Destination>, speakFirst: Boolean) {
         lastIndex = 0
         lastAlong = 0.0
         offRouteFixes = 0
@@ -304,8 +362,73 @@ object Navigation {
             stop = places.takeIf { it.size > 1 }?.first(),
         )
         // After what was being said (a stop reached), not over it
-        if (speakFirst) first?.let { say(it.spokenNow, alert = false, queue = true) }
-        return RouteResult.FOUND
+        if (speakFirst) first?.let { say(it.spokenNow, alert = false, queue = true, clips = listOf(VoiceClips.maneuver(it, soon = false))) }
+    }
+
+    /**
+     * How many seconds the drive from [from] to [place] takes now, by the same route service as the guidance (Google's
+     * with today's traffic when this build can); null when no route came. For the driving assistant's brief.
+     */
+    internal suspend fun eta(context: Context, from: MapFix, place: Destination): Double? = try {
+        val app = context.applicationContext
+        fetchRoute(app, LauncherSettings.get(app).routeServer.value, from, listOf(place)).firstOrNull()?.durationS
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        EventLog.log("Navigation: no time for the brief (${e.message})")
+        null
+    }
+
+    /** Google's route with today's traffic when this build can, else (or with Google out of reach) Valhalla's. */
+    private suspend fun fetchRoute(
+        context: Context, server: String?, from: MapFix, places: List<Destination>, alternatives: Boolean = false,
+    ): List<NavRoute> {
+        val language = AppLocales.voice(context).toLanguageTag()
+        if (server == null && GoogleRoutes.available) {
+            val text = try {
+                client.newCall(GoogleRoutes.request(context, from, places, language, alternatives)).await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Only the code: never the request, which carries the key
+                EventLog.log("Navigation: Google Routes not reached (${e.message}), Valhalla instead")
+                null
+            }
+            if (text != null) return withContext(Dispatchers.Default) { GoogleRoutes.parseAll(text) }.ifEmpty { throw RouteRefused("Google found none") }
+        }
+        return listOf(withContext(Dispatchers.Default) { NavRoute.fromValhalla(requestRoute(server, from, places, language)) })
+    }
+
+    /**
+     * Every few minutes on the way, the route asked again with the traffic of now: taken when it is [FASTER_BY_S]
+     * quicker by other roads (and said), or quietly when it keeps to the same roads (a fresher arrival time).
+     */
+    private suspend fun checkFaster(places: List<Destination>) {
+        val context = appContext ?: return
+        if (!GoogleRoutes.available || LauncherSettings.get(context).routeServer.value != null) return
+        val current = _state.value ?: return
+        if (current.arrived || current.rerouting || offRouteFixes > 0 || arrivalJob != null) return
+        val fix = MapLocation.fix.value?.takeIf { SystemClock.elapsedRealtime() - it.at < FRESH_FIX_MS } ?: return
+        val fresh = try {
+            val text = client.newCall(GoogleRoutes.request(context, fix, places, AppLocales.voice(context).toLanguageTag())).await()
+            withContext(Dispatchers.Default) { GoogleRoutes.parse(text) } ?: return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return
+        }
+        // The guidance moved on meanwhile (a reroute, an arrival): that one stands
+        if (_state.value?.route !== current.route || offRouteFixes > 0 || arrivalJob != null) return
+        val left = current.route.durationS - current.route.secondsTo(lastAlong)
+        val saves = left - fresh.durationS
+        val from = lastIndex
+        val sameRoads = (0 until fresh.size step SAME_ROAD_EVERY).all { i ->
+            RouteProgress.locate(current.route, fresh.lat(i), fresh.lon(i), from).offRouteM < SAME_ROAD_M
+        }
+        if (!sameRoads && saves < FASTER_BY_S) return
+        EventLog.log("Navigation: traffic check, ${if (sameRoads) "same roads" else "faster roads"}, ${(saves / 60).toInt()} min less")
+        adopt(withStopNames(context, fresh, places), places, speakFirst = false)
+        if (!sameRoads) say(AppLocales.voiceContext(context).resources.getString(R.string.nav_spoken_faster, (saves / 60).toInt()), alert = false, clips = listOf("faster"))
     }
 
     /** The server answered that there is no such route (a 4xx): asking again the same won't help. */
@@ -357,6 +480,16 @@ object Navigation {
     private fun withStopNames(context: Context, route: NavRoute, places: List<Destination>): NavRoute {
         val res = AppLocales.voiceContext(context).resources
         val maneuvers = route.maneuvers.map { m ->
+            // Google's arrival at the destination comes without words
+            if (m.kind == ManeuverKind.ARRIVE && m.stop == null && m.spokenNow.isBlank()) {
+                val place = places.last()
+                return@map m.copy(
+                    instruction = place.name,
+                    street = place.name,
+                    spokenNow = res.getString(R.string.nav_spoken_destination_now, place.name),
+                    spokenSoon = res.getString(R.string.nav_spoken_destination_soon, place.name),
+                )
+            }
             val place = m.stop?.let { places.getOrNull(it) } ?: return@map m
             m.copy(
                 instruction = place.name,
@@ -440,12 +573,12 @@ object Navigation {
         val spoken = SpokenManeuver(next.kind, route.lat(next.beginIndex), route.lon(next.beginIndex))
         if (!spoken.same(spokenSoon) && toNext < max(SOON_MIN_M, pace * SOON_S) && toNext > pace * NOW_S * 2) {
             spokenSoon = spoken
-            appContext?.let { say(NavVoice.aheadPhrase(it, toNext, next.spokenSoon), alert = next.kind == ManeuverKind.ARRIVE) }
+            appContext?.let { say(NavVoice.aheadPhrase(it, toNext, next.spokenSoon), alert = next.kind == ManeuverKind.ARRIVE, clips = VoiceClips.ahead(toNext, next)) }
         }
         if (!spoken.same(spokenNow) && toNext < max(NOW_MIN_M, pace * NOW_S)) {
             spokenNow = spoken
             spokenSoon = spoken
-            say(next.spokenNow, alert = next.kind == ManeuverKind.ARRIVE)
+            say(next.spokenNow, alert = next.kind == ManeuverKind.ARRIVE, clips = listOf(VoiceClips.maneuver(next, soon = false)))
         }
     }
 
@@ -475,7 +608,7 @@ object Navigation {
     private fun stopReached(places: List<Destination>) {
         EventLog.log("Navigation: stop reached")
         standingNearSince = 0L
-        appContext?.let { say(AppLocales.voiceContext(it).resources.getString(R.string.nav_spoken_stop_reached, places[1].name), alert = true) }
+        appContext?.let { say(AppLocales.voiceContext(it).resources.getString(R.string.nav_spoken_stop_reached, places[1].name), alert = true, clips = listOf("stop_reached")) }
         // By the place, not its index: the trip may have been changed meanwhile
         Trip.remove(places[0])
     }
@@ -495,12 +628,12 @@ object Navigation {
     }
 
     /** Says [text] as the voice setting allows: everything, only the arrivals ([alert]), or nothing; never with no screen. */
-    private fun say(text: String, alert: Boolean, queue: Boolean = false) {
+    private fun say(text: String, alert: Boolean, queue: Boolean = false, clips: List<String>? = null) {
         val context = appContext ?: return
         if (screens == 0) return
         when (LauncherSettings.get(context).guidanceVoice.value) {
-            GuidanceVoice.FULL -> voice?.say(text, queue)
-            GuidanceVoice.ALERTS -> if (alert) voice?.say(text, queue)
+            GuidanceVoice.FULL -> voice?.say(text, queue, clips)
+            GuidanceVoice.ALERTS -> if (alert) voice?.say(text, queue, clips)
             GuidanceVoice.MUTE -> Unit
         }
     }
@@ -517,6 +650,19 @@ object Navigation {
     private const val WRONG_WAY_M = 15.0
     private const val WRONG_WAY_MARGIN_M = 10.0
     private const val REROUTE_EVERY_MS = 10_000L
+
+    /** How long the other routes are offered when a trip starts. */
+    private const val ROUTE_OFFER_MS = 30_000L
+
+    /** How often the traffic is looked at again on the way (Google only: Valhalla has no traffic). */
+    private const val TRAFFIC_CHECK_MS = 5 * 60_000L
+
+    /** A route by other roads is worth taking from this much quicker (3 minutes). */
+    private const val FASTER_BY_S = 180.0
+
+    /** A new route keeps to the same roads when every [SAME_ROAD_EVERY]th point is this close to the old one. */
+    private const val SAME_ROAD_M = 40.0
+    private const val SAME_ROAD_EVERY = 20
     private const val MAX_REROUTE_GAP_MS = 80_000L
 
     /** Back on a route this long: the next time it is left, a new route comes quickly again. */
@@ -655,7 +801,7 @@ internal class NavVoice(private val context: Context) {
     private var ready = false
     private var closed = false
     private val pending = ArrayList<String>()
-    private val tts: TextToSpeech = TextToSpeech(context) { status ->
+    private val tts: TextToSpeech = TextToSpeech(context, { status ->
         if (status != TextToSpeech.SUCCESS) {
             EventLog.log("Navigation: no text-to-speech ($status)")
             return@TextToSpeech
@@ -667,10 +813,10 @@ internal class NavVoice(private val context: Context) {
             pending.forEach { speakNow(it, queue = true) }
             pending.clear()
         }
-    }
+    }, Speech.engine(context))
 
     private fun configure() {
-        tts.language = AppLocales.voice(context)
+        Speech.languageOf(tts, AppLocales.voice(context), "Navigation")
         tts.setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
@@ -679,10 +825,19 @@ internal class NavVoice(private val context: Context) {
         )
     }
 
-    /** Says [text], over what was being said unless [queue]. */
-    fun say(text: String, queue: Boolean = false) {
+    private val recorded = ClipPlayer(context, AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+    private val toCar = TtsToPcm(tts, context.cacheDir)
+
+    /** Says [text], over what was being said unless [queue]: in the recorded voice when [clips] are all recorded. */
+    fun say(text: String, queue: Boolean = false, clips: List<String>? = null) {
         synchronized(lock) {
             if (closed) return
+            if (clips != null && recorded.play(clips, queued = queue)) {
+                EventLog.log("Navigation: speaking (recorded)")
+                if (ready && !queue) tts.stop()
+                return
+            }
+            if (!queue) recorded.stop()
             if (ready) return speakNow(text, queue)
             if (!queue) pending.clear()
             pending.add(text)
@@ -691,12 +846,17 @@ internal class NavVoice(private val context: Context) {
 
     private fun speakNow(text: String, queue: Boolean) {
         EventLog.log("Navigation: speaking")
+        // Into the car's stream while the audio is copied: played on the phone, the copy would not hear it
+        if (!queue) tts.stop()
+        val usage = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
+        if (CarVoice.play(usage, queue, done = null) { toCar.pcm(text) }) return
         tts.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "nav")
     }
 
     fun silence() {
         synchronized(lock) {
             pending.clear()
+            recorded.stop()
             if (ready && !closed) tts.stop()
         }
     }
@@ -705,6 +865,7 @@ internal class NavVoice(private val context: Context) {
         synchronized(lock) {
             closed = true
             pending.clear()
+            recorded.stop()
         }
         tts.shutdown()
     }

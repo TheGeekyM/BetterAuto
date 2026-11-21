@@ -36,6 +36,7 @@ import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import com.simoneluconi.betterauto.EventLog
+import com.simoneluconi.betterauto.radio.Radio
 import com.simoneluconi.betterauto.settings.LauncherSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +102,10 @@ data class MediaAction(val action: String, val name: String, val icon: ImageBitm
  * Follows the phone's active media session (any app: Spotify, YouTube Music, ...) and controls it
  * through a Media3 controller, which speaks both to Media3 sessions and to the older ones.
  * Needs notification access for [MediaListenerService]; [hasAccess] reports whether we have it.
+ * Our own [Radio]'s session is never followed: the music player keeps the song the radio paused. The car's keys
+ * and the voice ([isPlaying], [pause], [resume], [skipNext], [skipPrevious]) act on the radio while it is in charge.
+ * One plays at a time: the radio tuning in pauses the song ([pauseForRadio]), a player starting stops the radio.
+ * A call's session (the phone's telecom service publishes one while a call rings or goes on) is never followed either.
  * Main thread only, except [pause], which hops there by itself.
  */
 @OptIn(UnstableApi::class)
@@ -139,6 +144,15 @@ object NowPlaying {
     // carried out by the controller that connects next, if soon enough
     private var resumeAskedAt = 0L
     private const val RESUME_PENDING_MS = 10_000L
+
+    // The radio was what [pause] silenced: [resume] tunes it in again rather than playing the song it had paused
+    private var radioPaused = false
+
+    // Whether the followed player was playing at its last report: only its start (not its going on) stops the radio
+    private var wasPlaying = false
+
+    /** The car's keys and the voice act on the radio: it plays, or it is what they paused. */
+    private val radioInCharge get() = Radio.on || radioPaused
 
     private val actionIcons = HashMap<String, ImageBitmap?>()
     private const val MAX_QUEUE = 200
@@ -211,6 +225,12 @@ object NowPlaying {
             return
         }
         resumeAskedAt = 0L
+        if (Radio.on) {
+            radioPaused = true
+            Radio.stop()
+        } else if (controller?.isPlaying == true) {
+            radioPaused = false
+        }
         val c = controller
         if (c != null) {
             c.pause()
@@ -223,8 +243,17 @@ object NowPlaying {
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE))
     }
 
-    /** Resumes the current player, or starts the most recently used music app if none is active. */
+    /**
+     * Resumes the current player, or, if none is active, starts the default one: the first app pinned in the
+     * bar, else Square when it is on the phone, else the most recently used music app.
+     * The radio instead while it plays (the song app stays paused) or when it was the one paused.
+     */
     fun resume() {
+        if (radioInCharge) {
+            radioPaused = false
+            if (!Radio.on) Radio.toggle(appContext)
+            return
+        }
         val c = controller
         if (c != null) {
             if (!c.isPlaying) c.play()
@@ -233,10 +262,42 @@ object NowPlaying {
         resumeAskedAt = SystemClock.elapsedRealtime()
         // A controller still connecting plays once it is there; reattaching now would only start it over
         if (attachedToken != null) return
-        LauncherSettings.get(appContext).recentApps.value.firstOrNull()?.let { open(it) }
+        val settings = LauncherSettings.get(appContext)
+        val square = DEFAULT_PLAYER.takeIf { it in MediaApps.installed(appContext) }
+        (settings.pinnedApps.value.firstOrNull() ?: square ?: settings.recentApps.value.firstOrNull())?.let { open(it) }
     }
 
+    /**
+     * The radio tunes in: the followed player is paused, as it should have done itself on losing the audio focus
+     * (some players on HyperOS keep playing, and both were heard). Any thread.
+     */
+    fun pauseForRadio() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { pauseForRadio() }
+            return
+        }
+        // A play asked while connecting (the auto-play) would start the song over the radio
+        resumeAskedAt = 0L
+        val c = controller ?: return
+        if (!c.isPlaying && !c.playWhenReady) return
+        EventLog.log("Now playing: the radio tunes in, ${c.connectedToken?.packageName} paused")
+        c.pause()
+    }
+
+    /** The music player started when nothing plays and none is pinned: Square, if installed. */
+    private const val DEFAULT_PLAYER = "dev.lelonio.square"
+
     fun previous() = controller?.seekToPrevious()
+
+    /** The car's keys and the voice: the next station while the radio is in charge, else the next track. */
+    fun skipNext() {
+        if (radioInCharge) Radio.next(appContext) else next()
+    }
+
+    /** The car's keys and the voice: the previous station while the radio is in charge, else the previous track. */
+    fun skipPrevious() {
+        if (radioInCharge) Radio.previous(appContext) else previous()
+    }
 
     /** Standard shuffle when the player supports it, otherwise the player's own "shuffle" button. */
     fun toggleShuffle() {
@@ -270,7 +331,8 @@ object NowPlaying {
 
     fun seekTo(positionMs: Long) = controller?.seekTo(positionMs)
 
-    val isPlaying: Boolean get() = controller?.isPlaying == true
+    /** Something plays: the followed player, or the radio (which the player doesn't show). */
+    val isPlaying: Boolean get() = controller?.isPlaying == true || Radio.on
 
     /**
      * Asks the current player to find and play [query] (an artist, a song, a playlist), like a voice request.
@@ -292,6 +354,12 @@ object NowPlaying {
         c.prepare()
         c.play()
         return true
+    }
+
+    /** Whether the current player takes [playFromSearch] itself (the music home offers its recent songs only then). */
+    fun canPlayFromSearch(): Boolean {
+        val platform = sessionManager?.let { activeSessions(it) }?.firstOrNull { it.packageName == _track.value?.packageName } ?: return false
+        return (platform.playbackState?.actions ?: 0L) and PlaybackState.ACTION_PLAY_FROM_SEARCH != 0L
     }
 
     private fun sendCustomCommand(c: MediaController, button: CommandButton) {
@@ -325,10 +393,14 @@ object NowPlaying {
             sessionManager = msm
             _hasAccess.value = true
             onSessionsChanged(activeSessions(msm))
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
+            EventLog.log("Music: no access to the phone's media sessions yet (${e.message})")
             _hasAccess.value = false
         }
     }
+
+    /** Notification access arrived (the phone binds the listener late, or the driver just allowed it). */
+    fun onAccessGranted() = main.post { if (users > 0 && !_hasAccess.value) start() }
 
     private fun refresh() {
         val msm = sessionManager ?: return
@@ -344,9 +416,16 @@ object NowPlaying {
 
     private fun listenerComponent() = ComponentName(appContext, MediaListenerService::class.java)
 
+    // The call sessions skipped last time, so each is logged once
+    private var skippedCalls = emptySet<String>()
+
     private fun onSessionsChanged(sessions: List<PlatformController>?) {
-        val list = sessions.orEmpty()
-        val best = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING } ?: list.firstOrNull()
+        val calls = sessions.orEmpty().map { it.packageName }.filter { it in CALL_SESSIONS }.toSet()
+        (calls - skippedCalls).forEach { EventLog.log("Now playing: $it is a call, not followed") }
+        skippedCalls = calls
+        val best = pickSession(sessions.orEmpty(), appContext.packageName, { it.packageName }) {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
         if (best?.sessionToken == attachedToken) {
             publish()
             return
@@ -362,6 +441,7 @@ object NowPlaying {
             it.release()
         }
         controller = null
+        wasPlaying = false
         attachedToken = session?.sessionToken
         if (session == null) {
             publish()
@@ -415,7 +495,17 @@ object NowPlaying {
         val buffering = !playing && c.playWhenReady && c.playbackState == Player.STATE_BUFFERING
         updateArt(metadata)
         val app = MediaApps.info(appContext, packageName)
-        if (playing) LauncherSettings.get(appContext).markRecent(packageName)
+        if (radioYields(Radio.on, wasPlaying, playing, SystemClock.elapsedRealtime() - Radio.tunedAt)) {
+            // Another player started over the radio (one that ignored the focus or got it back): the radio stops
+            EventLog.log("Now playing: $packageName started playing, the radio stops")
+            Radio.stop()
+        }
+        wasPlaying = playing
+        if (playing) {
+            LauncherSettings.get(appContext).markRecent(packageName)
+            // The song plays again (and the radio gave way): it is what the keys resume from now on
+            radioPaused = false
+        }
         val timeline = c.currentTimeline
         val active = if (timeline.isEmpty) -1 else c.currentMediaItemIndex
         if (timeline.windowCount != loggedQueueSize) {
@@ -563,12 +653,14 @@ object NowPlaying {
         accent = null
         if (key == null) return
         scope.launch {
-            val (image, color) = withContext(Dispatchers.Default) {
+            val (image, color) = withContext(Dispatchers.IO) {
                 val bitmap = Artwork.decode(appContext, data, uri, ART_PX)
                 val swatch = bitmap?.let { Palette.from(it).maximumColorCount(16).generate() }
                     ?.let { it.vibrantSwatch ?: it.dominantSwatch }
                 bitmap?.asImageBitmap() to swatch?.rgb?.let { Color(it) }
             }
+            // Which way the player hands its cover over, and whether it could be read
+            EventLog.log("Now playing: cover ${data?.let { "${it.size} bytes" } ?: uri?.scheme ?: "none"}, ${if (image != null) "shown" else "unreadable"}")
             if (artKey !== key) return@launch
             artImage = image
             accent = color
@@ -578,3 +670,36 @@ object NowPlaying {
 
     private fun CharSequence?.text(): String? = this?.toString()?.takeIf { it.isNotBlank() }
 }
+
+/**
+ * The session the music player follows: the one playing, else the most important one, never our own app's
+ * (the radio): the music player keeps showing the song the radio paused. Never a call's ([CALL_SESSIONS]): the
+ * phone's telecom service publishes a session while a call rings or goes on, which came first and put an empty
+ * "song" on the music player and the car's media status for the whole call.
+ */
+internal fun <T> pickSession(sessions: List<T>, ownPackage: String, packageOf: (T) -> String, playing: (T) -> Boolean): T? {
+    val others = sessions.filter { packageOf(it) != ownPackage && packageOf(it) !in CALL_SESSIONS }
+    return others.firstOrNull(playing) ?: others.firstOrNull()
+}
+
+/**
+ * Media sessions that are calls, not music: Android's telecom service (every phone call, seen during calls in the
+ * car), the phone apps that may publish one for the headset button, and Microsoft Teams (its session, for its
+ * calls, was followed with nothing in it).
+ */
+internal val CALL_SESSIONS = setOf(
+    "com.android.server.telecom",
+    "com.android.phone",
+    "com.android.incallui",
+    "com.google.android.dialer",
+    "com.microsoft.teams",
+)
+
+/**
+ * A player going from paused to playing while the radio is on stops the radio: last one started wins. Not within
+ * [RADIO_SETTLE_MS] of a tuning in, while the player the radio paused may still report its last playing state.
+ */
+internal fun radioYields(radioOn: Boolean, wasPlaying: Boolean, playing: Boolean, sinceTunedMs: Long): Boolean =
+    radioOn && playing && !wasPlaying && sinceTunedMs >= RADIO_SETTLE_MS
+
+internal const val RADIO_SETTLE_MS = 2_000L

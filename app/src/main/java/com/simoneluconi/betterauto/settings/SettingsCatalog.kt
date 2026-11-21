@@ -4,9 +4,14 @@ import androidx.annotation.StringRes
 import com.simoneluconi.betterauto.EventLog
 import android.content.Context
 import com.simoneluconi.betterauto.R
+import com.simoneluconi.betterauto.assist.FuelReserve
 import com.simoneluconi.betterauto.car.TemperatureUnit
 import com.simoneluconi.betterauto.car.UnitSystem
 import com.simoneluconi.betterauto.media.MediaApps
+import com.simoneluconi.betterauto.prayer.AsrJuristic
+import com.simoneluconi.betterauto.prayer.AzanSound
+import com.simoneluconi.betterauto.prayer.PrayerCity
+import com.simoneluconi.betterauto.prayer.PrayerMethod
 import kotlinx.coroutines.flow.StateFlow
 
 /** Where a setting is being changed from, for the log, and where it is shown. */
@@ -296,6 +301,28 @@ object SettingsCatalog {
             R.string.settings_shown_summary,
         ),
         PhoneNote("weather_note", home, R.string.weather_title, R.string.settings_weather_car_desc, widget = WidgetType.WEATHER),
+        // The prayer times widget and the Azan
+        ChoiceSetting(
+            "prayer_method", home, R.string.settings_prayer_method, R.string.settings_prayer_method_desc,
+            listOf(
+                SettingOption(PrayerMethod.EGYPTIAN, R.string.option_prayer_egyptian),
+                SettingOption(PrayerMethod.UMM_AL_QURA, R.string.option_prayer_umm_al_qura),
+                SettingOption(PrayerMethod.MWL, R.string.option_prayer_mwl),
+                SettingOption(PrayerMethod.ISNA, R.string.option_prayer_isna),
+                SettingOption(PrayerMethod.KARACHI, R.string.option_prayer_karachi),
+            ),
+            { it.prayerMethod }, LauncherSettings::setPrayerMethod, more = true,
+        ),
+        ChoiceSetting(
+            "asr_juristic", home, R.string.settings_asr, R.string.settings_asr_desc,
+            listOf(SettingOption(AsrJuristic.SHAFII, R.string.option_asr_shafii), SettingOption(AsrJuristic.HANAFI, R.string.option_asr_hanafi)),
+            { it.asrJuristic }, LauncherSettings::setAsrJuristic, more = true,
+        ),
+        ChoiceSetting(
+            "prayer_city", home, R.string.settings_prayer_city, R.string.settings_prayer_city_desc,
+            PrayerCity.entries.map { SettingOption(it, it.label) },
+            { it.prayerCity }, LauncherSettings::setPrayerCity, more = true,
+        ),
 
         // Display
         ChoiceSetting(
@@ -406,9 +433,70 @@ object SettingsCatalog {
             "notification_groups", notifications, R.string.settings_notification_groups, R.string.settings_notification_groups_desc, shownHidden,
             { it.notificationGroups }, LauncherSettings::setNotificationGroups, more = true,
         ),
+        ChoiceSetting(
+            "read_messages", notifications, R.string.settings_read_messages, R.string.settings_read_messages_desc,
+            listOf(
+                SettingOption(ReadMessages.OFF, R.string.option_off),
+                SettingOption(ReadMessages.ANNOUNCE, R.string.option_read_announce),
+                SettingOption(ReadMessages.READ_REPLY, R.string.option_read_reply),
+            ),
+            { it.readMessages }, LauncherSettings::setReadMessages,
+        ),
+        AppsSetting(
+            "read_messages_apps", notifications, R.string.settings_read_messages_apps, R.string.settings_read_messages_apps_desc,
+            R.string.settings_allowed_summary, R.string.settings_no_notification_apps,
+            // The chat apps of the phone, and any app that sent a notification
+            { context, settings ->
+                (com.simoneluconi.betterauto.notifications.MessageText.DefaultApps + settings.readAloudApps.value + settings.notificationApps.value)
+                    .distinct().filter { runCatching { context.packageManager.getPackageInfo(it, 0) }.isSuccess }
+            },
+            { it.readAloudApps }, listedMeansSelected = true, LauncherSettings::toggleReadAloudApp,
+        ),
+        ChoiceSetting(
+            "announce_calls", notifications, R.string.settings_announce_calls, R.string.settings_announce_calls_desc, onOff,
+            { it.announceCalls }, LauncherSettings::setAnnounceCalls,
+        ),
 
         // Voice
+        ChoiceSetting(
+            "voice_language", voice, R.string.language_voice, R.string.settings_voice_language_desc,
+            listOf(
+                SettingOption(VoiceLanguage.AUTO, R.string.option_auto),
+                SettingOption(VoiceLanguage.ENGLISH, R.string.option_language_english),
+                SettingOption(VoiceLanguage.ARABIC, R.string.option_language_arabic),
+            ),
+            { it.voiceLanguage }, LauncherSettings::setVoiceLanguage,
+        ),
+        ChoiceSetting(
+            "spoken_voice", voice, R.string.settings_spoken_voice, R.string.settings_spoken_voice_desc,
+            listOf(
+                SettingOption(SpokenVoice.AUTONOE, R.string.option_voice_autonoe),
+                SettingOption(SpokenVoice.SORAYA, R.string.option_voice_soraya),
+                SettingOption(SpokenVoice.NADINE, R.string.option_voice_nadine),
+                SettingOption(SpokenVoice.PHONE, R.string.option_voice_phone),
+            ),
+            { it.spokenVoice }, LauncherSettings::setSpokenVoice,
+        ),
+        ChoiceSetting("wake_phrase", voice, R.string.settings_wake_phrase, R.string.settings_wake_phrase_desc, onOff, { it.wakePhrase }, LauncherSettings::setWakePhrase),
+        ChoiceSetting(
+            "wake_sensitivity", voice, R.string.settings_wake_sensitivity, R.string.settings_wake_sensitivity_desc,
+            listOf(
+                SettingOption(WakeSensitivity.STRICT, R.string.option_wake_strict),
+                SettingOption(WakeSensitivity.NORMAL, R.string.option_wake_normal),
+                SettingOption(WakeSensitivity.EAGER, R.string.option_wake_eager),
+            ),
+            { it.wakeSensitivity }, LauncherSettings::setWakeSensitivity, more = true,
+        ),
         ChoiceSetting("voice_enabled", voice, R.string.settings_voice, R.string.settings_voice_desc, onOff, { it.voiceEnabled }, LauncherSettings::setVoiceEnabled),
+        ChoiceSetting(
+            "azan", voice, R.string.settings_azan, R.string.settings_azan_desc,
+            listOf(
+                SettingOption(AzanSound.SPOKEN, R.string.option_azan_spoken),
+                SettingOption(AzanSound.CHIME, R.string.option_azan_chime),
+                SettingOption(AzanSound.OFF, R.string.option_off),
+            ),
+            { it.azanSound }, LauncherSettings::setAzanSound,
+        ),
         ChoiceSetting(
             "voice_microphone", voice, R.string.settings_voice_microphone, R.string.settings_voice_microphone_desc,
             // CAR is stored as before: it already meant the car's microphone when there is one, else the phone's
@@ -416,7 +504,45 @@ object SettingsCatalog {
             { it.voiceMicrophone }, LauncherSettings::setVoiceMicrophone,
         ),
         ChoiceSetting("voice_replies", voice, R.string.settings_voice_replies, R.string.settings_voice_replies_desc, onOff, { it.voiceReplies }, LauncherSettings::setVoiceReplies),
+        PhoneNote("driver_name_note", voice, R.string.settings_driver_name, R.string.settings_driver_name_car_desc),
+        ChoiceSetting(
+            "voice_brain", voice, R.string.settings_voice_brain, R.string.settings_voice_brain_desc,
+            listOf(
+                SettingOption(VoiceBrain.AUTO, R.string.option_auto),
+                SettingOption(VoiceBrain.ONLINE, R.string.option_brain_online),
+                SettingOption(VoiceBrain.OFFLINE, R.string.option_brain_offline),
+            ),
+            { it.voiceBrain }, LauncherSettings::setVoiceBrain,
+        ),
+        ChoiceSetting(
+            "claude_model", voice, R.string.settings_claude_model, R.string.settings_claude_model_desc,
+            listOf(
+                SettingOption(ClaudeModel.HAIKU, R.string.option_claude_haiku),
+                SettingOption(ClaudeModel.SONNET, R.string.option_claude_sonnet),
+                SettingOption(ClaudeModel.OPUS, R.string.option_claude_opus),
+            ),
+            { it.claudeModel }, LauncherSettings::setClaudeModel, more = true,
+        ),
+        ChoiceSetting(
+            "stt_model", voice, R.string.settings_stt_model, R.string.settings_stt_model_desc,
+            listOf(SettingOption(SttModel.FLASH_LITE, R.string.option_stt_flash_lite), SettingOption(SttModel.FLASH, R.string.option_stt_flash)),
+            { it.sttModel }, LauncherSettings::setSttModel, more = true,
+        ),
+        // One voice, shown in two groups: the one picked is selected in its own group
+        ChoiceSetting(
+            "gemini_voice_female", voice, R.string.settings_gemini_voice_female, R.string.settings_gemini_voice_female_desc,
+            GeminiVoice.entries.filter { it.female }.map { SettingOption(it, geminiVoiceLabel(it)) },
+            { it.geminiVoice }, LauncherSettings::setGeminiVoice, more = true,
+        ),
+        ChoiceSetting(
+            "gemini_voice_male", voice, R.string.settings_gemini_voice_male, R.string.settings_gemini_voice_male_desc,
+            GeminiVoice.entries.filter { !it.female }.map { SettingOption(it, geminiVoiceLabel(it)) },
+            { it.geminiVoice }, LauncherSettings::setGeminiVoice, more = true,
+        ),
         ChoiceSetting("mic_button", voice, R.string.settings_mic_button, R.string.settings_mic_button_desc, shownHidden, { it.showMicButton }, LauncherSettings::setShowMicButton),
+        // The driving assistant's spoken words
+        ChoiceSetting("assist_brief", voice, R.string.settings_assist_brief, R.string.settings_assist_brief_desc, onOff, { it.assistBrief }, LauncherSettings::setAssistBrief),
+        ChoiceSetting("assist_rest", voice, R.string.settings_assist_rest, R.string.settings_assist_rest_desc, onOff, { it.assistRest }, LauncherSettings::setAssistRest),
 
         // Map
         ChoiceSetting(
@@ -443,6 +569,10 @@ object SettingsCatalog {
         ChoiceSetting(
             "speed_limit", SettingsCategory.MAP, R.string.settings_speed_limit, R.string.settings_speed_limit_desc, shownHidden,
             { it.showSpeedLimit }, LauncherSettings::setShowSpeedLimit,
+        ),
+        ChoiceSetting(
+            "assist_speed", SettingsCategory.MAP, R.string.settings_assist_speed, R.string.settings_assist_speed_desc, onOff,
+            { it.assistSpeed }, LauncherSettings::setAssistSpeed,
         ),
         ChoiceSetting(
             "guidance_voice", SettingsCategory.MAP, R.string.settings_guidance_voice, R.string.settings_guidance_voice_desc,
@@ -474,6 +604,21 @@ object SettingsCatalog {
             { it.temperatureUnit }, LauncherSettings::setTemperatureUnit,
         ),
         ChoiceSetting("engine_light", vehicle, R.string.settings_engine_light, R.string.settings_engine_light_desc, shownHidden, { it.showEngineLight }, LauncherSettings::setShowEngineLight),
+        ChoiceSetting("assist_fuel", vehicle, R.string.settings_assist_fuel, R.string.settings_assist_fuel_desc, onOff, { it.assistFuel }, LauncherSettings::setAssistFuel),
+        ChoiceSetting(
+            "assist_fuel_reserve", vehicle, R.string.settings_assist_fuel_reserve, R.string.settings_assist_fuel_reserve_desc,
+            listOf(
+                SettingOption(FuelReserve.LOW, R.string.option_fuel_reserve_low),
+                SettingOption(FuelReserve.NORMAL, R.string.option_fuel_reserve_normal),
+                SettingOption(FuelReserve.HIGH, R.string.option_fuel_reserve_high),
+            ),
+            { it.fuelReserve }, LauncherSettings::setFuelReserve, more = true,
+        ),
+        ChoiceSetting("assist_parked", vehicle, R.string.settings_assist_parked, R.string.settings_assist_parked_desc, onOff, { it.assistParked }, LauncherSettings::setAssistParked),
+        ChoiceSetting(
+            "assist_parked_notify", vehicle, R.string.settings_assist_parked_notify, R.string.settings_assist_parked_notify_desc, onOff,
+            { it.assistParkedNotify }, LauncherSettings::setAssistParkedNotify, more = true,
+        ),
 
         // Smart home: linked and chosen on the phone
         PhoneNote("smart_home_note", SettingsCategory.SMART_HOME, R.string.smarthome_title, R.string.settings_smart_home_car_desc),
@@ -492,4 +637,38 @@ object SettingsCatalog {
 
     /** The categories with something to show in the car. */
     fun carCategories(): List<SettingsCategory> = SettingsCategory.entries.filter { items(it, SettingsSurface.CAR).isNotEmpty() }
+}
+
+/** The voices' names (proper names, the same in every language). */
+private fun geminiVoiceLabel(voice: GeminiVoice): Int = when (voice) {
+    GeminiVoice.ZEPHYR -> R.string.gemini_voice_zephyr
+    GeminiVoice.KORE -> R.string.gemini_voice_kore
+    GeminiVoice.LEDA -> R.string.gemini_voice_leda
+    GeminiVoice.AOEDE -> R.string.gemini_voice_aoede
+    GeminiVoice.CALLIRRHOE -> R.string.gemini_voice_callirrhoe
+    GeminiVoice.AUTONOE -> R.string.gemini_voice_autonoe
+    GeminiVoice.DESPINA -> R.string.gemini_voice_despina
+    GeminiVoice.ERINOME -> R.string.gemini_voice_erinome
+    GeminiVoice.LAOMEDEIA -> R.string.gemini_voice_laomedeia
+    GeminiVoice.ACHERNAR -> R.string.gemini_voice_achernar
+    GeminiVoice.GACRUX -> R.string.gemini_voice_gacrux
+    GeminiVoice.PULCHERRIMA -> R.string.gemini_voice_pulcherrima
+    GeminiVoice.VINDEMIATRIX -> R.string.gemini_voice_vindemiatrix
+    GeminiVoice.SULAFAT -> R.string.gemini_voice_sulafat
+    GeminiVoice.PUCK -> R.string.gemini_voice_puck
+    GeminiVoice.CHARON -> R.string.gemini_voice_charon
+    GeminiVoice.FENRIR -> R.string.gemini_voice_fenrir
+    GeminiVoice.ORUS -> R.string.gemini_voice_orus
+    GeminiVoice.ENCELADUS -> R.string.gemini_voice_enceladus
+    GeminiVoice.IAPETUS -> R.string.gemini_voice_iapetus
+    GeminiVoice.UMBRIEL -> R.string.gemini_voice_umbriel
+    GeminiVoice.ALGIEBA -> R.string.gemini_voice_algieba
+    GeminiVoice.ALGENIB -> R.string.gemini_voice_algenib
+    GeminiVoice.RASALGETHI -> R.string.gemini_voice_rasalgethi
+    GeminiVoice.ALNILAM -> R.string.gemini_voice_alnilam
+    GeminiVoice.SCHEDAR -> R.string.gemini_voice_schedar
+    GeminiVoice.ACHIRD -> R.string.gemini_voice_achird
+    GeminiVoice.ZUBENELGENUBI -> R.string.gemini_voice_zubenelgenubi
+    GeminiVoice.SADACHBIA -> R.string.gemini_voice_sadachbia
+    GeminiVoice.SADALTAGER -> R.string.gemini_voice_sadaltager
 }

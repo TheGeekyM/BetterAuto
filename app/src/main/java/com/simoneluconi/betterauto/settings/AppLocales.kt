@@ -8,7 +8,7 @@ import com.simoneluconi.betterauto.phone.PhoneCountry
 import java.util.Locale
 
 /** The language voice commands are heard and answered in. */
-enum class VoiceLanguage { AUTO, ITALIAN, ENGLISH }
+enum class VoiceLanguage { AUTO, ITALIAN, ENGLISH, ARABIC }
 
 /** How dates, times and numbers are written. */
 enum class FormatRegion { AUTO, ITALY, US, UK }
@@ -25,6 +25,8 @@ object AppLocales {
     fun voice(choice: VoiceLanguage, phone: List<Locale>, country: String): Locale = when (choice) {
         VoiceLanguage.ITALIAN -> Locale.ITALY
         VoiceLanguage.ENGLISH -> phone.firstOrNull { it.language == "en" } ?: Locale.US
+        // Egyptian: its recognition model and voice, and Google Routes in Arabic
+        VoiceLanguage.ARABIC -> Locale.forLanguageTag("ar-EG")
         VoiceLanguage.AUTO -> smart(phone, country) { it.language in VoiceLanguages } ?: Locale.US
     }
 

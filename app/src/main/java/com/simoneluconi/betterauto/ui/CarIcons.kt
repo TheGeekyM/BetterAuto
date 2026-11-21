@@ -16,6 +16,10 @@ import androidx.compose.ui.unit.dp
 object CarIcons {
     val Home = icon("M3 11l9-8 9 8", "M5 10v10h14V10")
     val Music = icon("M9 18V5l12-2v13", circle(6f, 18f, 3f), circle(18f, 16f, 3f))
+    val Radio = icon(
+        "M4.9 19.1C1 15.2 1 8.8 4.9 4.9", "M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5", circle(12f, 12f, 2f),
+        "M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5", "M19.1 4.9C23 8.8 23 15.1 19.1 19",
+    )
     val Map = icon("M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z", circle(12f, 10f, 2.5f))
     val Phone = icon("M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z")
     val Bell = icon("M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.94 1.94 0 0 0 3.4 0")
@@ -52,6 +56,15 @@ object CarIcons {
     val Back = icon("M15 6l-6 6 6 6")
     val Expand = icon("M8 3H5a2 2 0 0 0-2 2v3", "M21 8V5a2 2 0 0 0-2-2h-3", "M3 16v3a2 2 0 0 0 2 2h3", "M16 21h3a2 2 0 0 0 2-2v-3")
     val UpNext = icon("M3 6h12M3 12h12M3 18h7", "M15 15l6 3-6 3z")
+    /** The music page's sections: its home (a grid of tiles), the library (books on a shelf), the lyrics (words in a bubble). */
+    val Tiles = icon(
+        "M5 4h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
+        "M15 4h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
+        "M5 14h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z",
+        "M15 14h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z",
+    )
+    val Library = icon("M5 4v16", "M9.5 4v16", "M14 4.6l4.6 15")
+    val Lyrics = icon("M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", "M7.5 8.5h9", "M7.5 12.5h5")
     val Check = icon("M5 12.5l4.5 4.5L19 7.5")
     val Wireless = icon("M2 9a15 15 0 0 1 20 0", "M5.5 12.5a10 10 0 0 1 13 0", "M9 16a5 5 0 0 1 6 0", circle(12f, 19.5f, 0.6f))
     val Speaker = icon("M11 5L6 9H3v6h3l5 4V5z", "M15.5 8.5a5 5 0 0 1 0 7", "M18.5 5.5a9.5 9.5 0 0 1 0 13")
@@ -62,6 +75,9 @@ object CarIcons {
     val CallAnswer = icon(filled = listOf(
         "M20 15.5c-1.2 0-2.4-.2-3.6-.6-.3-.1-.7 0-1 .2l-2.2 2.2c-2.8-1.4-5.1-3.8-6.6-6.6l2.2-2.2c.3-.3.4-.7.2-1-.3-1.1-.5-2.3-.5-3.5 0-.6-.4-1-1-1H4c-.6 0-1 .4-1 1 0 9.4 7.6 17 17 17 .6 0 1-.4 1-1v-3.5c0-.6-.4-1-1-1z"
     ))
+    /** The voice assistant can go online (Gemini and Claude) / only the phone. */
+    val Cloud = icon("M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.1 4.5 4.5 0 0 0 7 18z")
+    val CloudOff = icon("M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.1 4.5 4.5 0 0 0 7 18z", "M4 4l16 16")
     val Mic = icon("M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M19 11a7 7 0 0 1-14 0", "M12 18v3")
     val MicOff = icon("M9 9v3a3 3 0 0 0 5.1 2.1", "M15 9.3V6a3 3 0 0 0-5.9-.8", "M19 11a7 7 0 0 1-1.1 3.8", "M5 11a7 7 0 0 0 11.6 5.3", "M12 18v3", "M3 3l18 18")
     val Dialpad = icon(
@@ -73,6 +89,8 @@ object CarIcons {
     val Backspace = icon("M21 5H8l-6 7 6 7h13z", "M11 9l6 6", "M17 9l-6 6")
     val Star = icon("M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z")
     val Clock = icon(circle(12f, 12f, 9f), "M12 7v5l3 2")
+    /** A domed mosque with its spire and door: the prayer times. */
+    val Mosque = icon("M5 21v-8a7 7 0 0 1 14 0v8", "M3 21h18", "M12 6V3", "M10 21v-3a2 2 0 0 1 4 0v3")
     val Calendar = icon("M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z", "M3 10h18M8 3v4M16 3v4")
     val Weather = icon("M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z")
     val Contacts = icon("M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2", circle(10f, 8f, 4f), "M21 21v-2a4 4 0 0 0-3-3.9", "M16 4.1a4 4 0 0 1 0 7.8")

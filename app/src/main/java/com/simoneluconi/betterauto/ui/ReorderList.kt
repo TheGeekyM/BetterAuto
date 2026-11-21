@@ -108,8 +108,9 @@ fun DragRow(label: String, dragging: Boolean, handle: Modifier) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (dragging) colors.surface else colors.surface2, shape)
-            .border(1.dp, if (dragging) colors.focus else colors.line, shape)
+            // The row in hand floats over the others: the dark glass of what floats
+            .background(if (dragging) colors.glass else colors.surface2, shape)
+            .border(1.dp, if (dragging) colors.accent else colors.line, shape)
             .padding(start = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -147,6 +147,8 @@ picks one, `-Serial <id>` picks the phone.
   Navigation prompts: `--es navPrompt "In 300 metres, turn right"` speaks it like a navigation app
   (guidance usage): with Shizuku it goes to the car's guidance stream, otherwise the phone speaks it
   and the music in the car is lowered meanwhile (`Car audio: navigation prompt ...` in the log).
+  BetterAuto's own directions and replies don't go that way: while copying they are mixed into the media
+  stream (`CarVoice`), so the phone stays muted.
   `--ez copyAudio true` copies the audio as without Shizuku for the current connection (`false` goes
   back), to try that path on a phone that has Shizuku. The bench Crankshaft takes the guidance stream
   and ducks its music but does not play 16 kHz audio: the prompt itself is heard only in a car.

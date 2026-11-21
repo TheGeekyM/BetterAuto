@@ -70,6 +70,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.simoneluconi.betterauto.audio.CarAudio
 import com.simoneluconi.betterauto.audio.ShizukuAudio
 import com.simoneluconi.betterauto.aap.AapTls
+import com.simoneluconi.betterauto.assist.ParkedCarCard
 import com.simoneluconi.betterauto.ui.CarIcon
 import com.simoneluconi.betterauto.ui.CarIcons
 import com.simoneluconi.betterauto.ui.vehicle.WarningAmber
@@ -84,6 +85,7 @@ import com.simoneluconi.betterauto.ui.smarthome.SmartHomeCard
 import com.simoneluconi.betterauto.settings.SettingsCategory
 import com.simoneluconi.betterauto.ui.theme.CarTheme
 import com.simoneluconi.betterauto.ui.theme.LocalCarColors
+import com.simoneluconi.betterauto.ui.theme.glass
 
 /** The app on the phone: connection status, a setup checklist, the car UI preview and the protocol log. */
 class MainActivity : ComponentActivity() {
@@ -96,18 +98,25 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        openRequest.value = intent?.getStringExtra(EXTRA_OPEN)
+        // Only when really opened with it: recreated (rotation), the request was already taken
+        if (savedInstanceState == null) openRequest.value = intent?.getStringExtra(EXTRA_OPEN)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // If the app died while connected, the phone may still be muted: put the volume back now
         CarAudio.init(this)
         ShizukuAudio.init(this)
         setContent {
-            CarTheme(night = isSystemInDarkTheme(), album = null) {
+            CarTheme(night = isSystemInDarkTheme()) {
                 var page by rememberSaveable { mutableStateOf(PhonePage.HOME) }
+                // Opened from the "pair the car's WiFi" notification: the pairing starts by itself
+                var pairWifi by remember { mutableStateOf(false) }
                 val request by openRequest
                 LaunchedEffect(request) {
                     if (request == OPEN_SMART_HOME) page = PhonePage.SMART_HOME
+                    if (request == OPEN_WIFI_PAIRING) {
+                        page = PhonePage.WIRELESS
+                        pairWifi = true
+                    }
                     openRequest.value = null
                 }
                 SelfSignedNotice()
@@ -125,7 +134,7 @@ class MainActivity : ComponentActivity() {
                     )
                     PhonePage.LICENCES -> LicencesPage(onBack = { page = PhonePage.HOME })
                     PhonePage.SETUP -> SetupPage(onBack = { page = PhonePage.HOME })
-                    PhonePage.WIRELESS -> WirelessPage(onBack = { page = PhonePage.HOME })
+                    PhonePage.WIRELESS -> WirelessPage(pairWifi = pairWifi, onPairAsked = { pairWifi = false }, onBack = { page = PhonePage.HOME })
                     PhonePage.SETTINGS -> PhoneSettingsPage(onBack = { page = PhonePage.HOME })
                     // The home page's smart-home card is a shortcut to Settings › Smart home
                     PhonePage.SMART_HOME -> PhoneSettingsPage(onBack = { page = PhonePage.HOME }, start = SettingsCategory.SMART_HOME)
@@ -137,6 +146,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN = "open"
         const val OPEN_SMART_HOME = "smart_home"
+        const val OPEN_WIFI_PAIRING = "wifi_pairing"
     }
 }
 
@@ -215,6 +225,7 @@ private fun PhoneHome(
         }
         ConnectionCard()
         NavigationCard()
+        ParkedCarCard()
         SetupCard(steps, onOpenSetup)
         WirelessCard(onOpenWireless)
         SettingsCard(onOpenSettings)
@@ -226,7 +237,7 @@ private fun PhoneHome(
         LogCard()
         // Last, quietly: what BetterAuto is built with
         CarLabel(
-            stringResource(R.string.licences_title), 15.sp, colors.focus,
+            stringResource(R.string.licences_title), 15.sp, colors.accent,
             Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onOpenLicences).padding(horizontal = 4.dp, vertical = 6.dp),
             weight = FontWeight.Bold,
         )
@@ -256,8 +267,8 @@ private fun SelfSignedNotice() {
         Column(
             Modifier
                 .fillMaxWidth()
+                .glass(RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
-                .background(colors.surface)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -292,16 +303,16 @@ private fun ConnectionCard() {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
-            .background(if (connected) colors.focus.copy(alpha = 0.16f) else colors.surface)
+            .background(if (connected) colors.accent.copy(alpha = 0.16f) else colors.surface)
             .padding(20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Box(
-            Modifier.size(56.dp).background(if (connected) colors.focus else colors.surface2, CircleShape),
+            Modifier.size(56.dp).background(if (connected) colors.accent else colors.surface2, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            CarIcon(CarIcons.Car, if (connected) Color.White else colors.text2, Modifier.size(28.dp))
+            CarIcon(CarIcons.Car, if (connected) colors.onAccent else colors.text2, Modifier.size(28.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             CarLabel(
@@ -320,8 +331,8 @@ private fun StepCard(step: Step) {
     Column(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -354,7 +365,7 @@ private fun StepCard(step: Step) {
         step.action?.let { PillButton(it, primary = step.state == StepState.TODO, onClick = step.onAction) }
         step.link?.let { link ->
             CarLabel(
-                link, 15.sp, colors.focus,
+                link, 15.sp, colors.accent,
                 Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = step.onLink).padding(vertical = 6.dp, horizontal = 2.dp),
                 weight = FontWeight.Bold,
             )
@@ -367,7 +378,7 @@ private fun StateBadge(state: StepState) {
     val colors = LocalCarColors.current
     val (label, background, content) = when (state) {
         StepState.DONE -> Triple(R.string.step_ready, StepDoneGreen, Color.White)
-        StepState.TODO -> Triple(R.string.step_todo, colors.focus, Color.White)
+        StepState.TODO -> Triple(R.string.step_todo, colors.accent, colors.onAccent)
         StepState.OPTIONAL -> Triple(R.string.step_optional, colors.surface2, colors.text2)
     }
     Row(
@@ -389,21 +400,21 @@ private fun SetupCard(steps: List<Step>, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .clickable(onClick = onClick)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            Modifier.size(44.dp).background(if (todo == 0) StepDoneGreen else colors.focus, CircleShape),
+            Modifier.size(44.dp).background(if (todo == 0) StepDoneGreen else colors.accent, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (todo == 0) {
                 CarIcon(CarIcons.Check, Color.White, Modifier.size(22.dp))
             } else {
-                CarLabel(todo.toString(), 18.sp, Color.White, weight = FontWeight.ExtraBold)
+                CarLabel(todo.toString(), 18.sp, colors.onAccent, weight = FontWeight.ExtraBold)
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -459,15 +470,15 @@ private fun NavigationCard() {
     Row(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .clickable { context.startActivity(Intent(context, DestinationActivity::class.java)) }
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(Modifier.size(44.dp).background(if (places.isEmpty()) colors.surface2 else colors.focus, CircleShape), contentAlignment = Alignment.Center) {
-            CarIcon(CarIcons.Map, if (places.isEmpty()) colors.text2 else Color.White, Modifier.size(22.dp))
+        Box(Modifier.size(44.dp).background(if (places.isEmpty()) colors.surface2 else colors.accent, CircleShape), contentAlignment = Alignment.Center) {
+            CarIcon(CarIcons.Map, if (places.isEmpty()) colors.text2 else colors.onAccent, Modifier.size(22.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             CarLabel(stringResource(R.string.nav_card_title), 18.sp, colors.text, weight = FontWeight.Bold)
@@ -493,8 +504,8 @@ private fun SettingsCard(onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .glass(RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface)
             .clickable(onClick = onClick)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -534,15 +545,15 @@ private fun LogCard() {
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(colors.surface),
+            .glass(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp)),
     ) {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CarLabel(stringResource(R.string.log_title), 18.sp, colors.text, Modifier.weight(1f), weight = FontWeight.Bold)
-            CarLabel(stringResource(if (open) R.string.log_hide else R.string.log_show), 15.sp, colors.focus, weight = FontWeight.Bold)
+            CarLabel(stringResource(if (open) R.string.log_hide else R.string.log_show), 15.sp, colors.accent, weight = FontWeight.Bold)
         }
         DiagnosticLogButton()
         if (open) {
@@ -596,12 +607,12 @@ internal fun PillButton(label: String, primary: Boolean, modifier: Modifier = Mo
         modifier
             .widthIn(min = 88.dp)
             .clip(RoundedCornerShape(50))
-            .background(if (primary) colors.focus else colors.surface)
+            .background(if (primary) colors.accent else colors.surface)
             .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        CarLabel(label, 15.sp, if (primary) Color.White else colors.text, weight = FontWeight.Bold)
+        CarLabel(label, 15.sp, if (primary) colors.onAccent else colors.text, weight = FontWeight.Bold)
     }
 }
 
@@ -675,9 +686,9 @@ private val PhonePermissions = arrayOf(
     Manifest.permission.READ_PHONE_STATE,
 )
 
-/** Voice commands use the phone's own offline recognizer: there or not, nothing to grant. */
+/** Voice commands use the phone's own recognizer (offline when it has one): there or not, nothing to grant. */
 private fun voiceStep(context: Context): Step {
-    val available = Build.VERSION.SDK_INT >= 31 && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    val available = android.speech.SpeechRecognizer.isRecognitionAvailable(context)
     return Step(
         icon = CarIcons.Mic,
         title = context.getString(R.string.step_voice_title),
